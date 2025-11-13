@@ -1,7 +1,6 @@
 !pip install arch
 !pip install rpy2
 
-
 import pandas as pd
 import numpy as np
 import statsmodels.api as sm
@@ -18,11 +17,13 @@ from statsmodels.stats.outliers_influence import variance_inflation_factor
 from scipy.stats import friedmanchisquare
 from statsmodels.stats.diagnostic import acorr_ljungbox
 from statsmodels.graphics.tsaplots import plot_acf, plot_pacf
+from statsmodels.tsa.vector_ar.vecm import coint_johansen
+from statsmodels.stats.diagnostic import het_white, het_breuschpagan
 
 
 
 ###############################
-    #ЗАГРУЗКА + ПРЕДЛОБРАБОТКА ДАННЫХ
+    #ЗАГРУЗКА + ПРЕДОБРАБОТКА ДАННЫХ
 ###############################
 df_reg = pd.read_excel('База данных_рег и фед показатели.xlsx', skiprows=1, sheet_name = 'data')
 df_RF = pd.read_excel('База данных_рег и фед показатели.xlsx', skiprows=1, sheet_name = 'data_RF')
@@ -81,7 +82,6 @@ def calculate_expected_inflation_12m(df, date_col='Date',
     )
     
     return df_calc
-
 
 df_RF = calculate_expected_inflation_12m(
                 df_RF,
@@ -144,8 +144,9 @@ fig.set_xticklabels(fig.get_xticklabels(),
 plt.tight_layout()
 
 
+
 ###############################
-    #VIF-анализ
+    #VIF-анализ - начальные данные
 ###############################
 
 vif_variables = [
@@ -167,9 +168,10 @@ vif_data["VIF"] = [variance_inflation_factor(X_vif.values, i+1) for i in range(l
 vif_data = vif_data.sort_values('VIF', ascending=False)
 
 print("\n" + "="*80)
-print("РЕЗУЛЬТАТЫ VIF АНАЛИЗА")
+print("РЕЗУЛЬТАТЫ VIF АНАЛИЗА - НАЧАЛЬНЫЕ ДАННЫЕ")
 print("="*80)
 print(vif_data.to_string(index=False))
+
 
 
 ##############################
@@ -238,8 +240,6 @@ def friedman_seasonality_test(df, date_col='Date', value_col='Variable',
             'n_months': len(pivot_data.columns),
             'error': str(e)
         }
-
-
 # Применяем тест
 
 friedman_results = []
@@ -593,7 +593,6 @@ print("="*80)
 print(friedman_summary.to_string(index=False))
 
     
-
 print("\n" + "="*60)
 print("РАСЧЕТ ИНДЕКСА ПРЕДПРИНИМАТЕЛЬСКОЙ УВЕРЕННОСТИ")
 print("="*60)
@@ -670,12 +669,12 @@ ax1.set_ylabel('%', fontsize=11)
 ax1.set_xlabel('Дата', fontsize=11)
 ax1.tick_params(axis='both', labelsize=10)
 
-df_taylor = df_RF[['Date','ROISFIX', 'Inflation_gap', 'Nominal_Percent_Rate', 'Ent_conf_ind_total']]
+
+df_taylor = df_RF[['Date','ROISFIX', 'Inflation_gap', 'Nominal_Percent_Rate', 'Ent_conf_ind_total', 'Expected_Inflation_12m']]
+df_taylor.head()
 
 
-
-
-##############################
+###############################
 # Тест Льюинга-Бокса до перехода к разностям
 ###############################
 
@@ -900,7 +899,6 @@ else:
 
 
 
-
 ###############################
     #Тесты на стационарность до перехода к разностям
 ###############################
@@ -908,7 +906,8 @@ variables_to_test = [
     'ROISFIX',
     'Inflation_gap',
     'Nominal_Percent_Rate',
-    'Ent_conf_ind_total'
+    'Ent_conf_ind_total',
+    'Expected_Inflation_12m'
 ]
 
 df_test = df_taylor[variables_to_test]
@@ -993,7 +992,9 @@ print(stationarity_df.to_string())
 
 
 
-
+###############################
+    #Логарифмирование + приведение к первым разностям
+###############################
 log_vars = {
     'ROISFIX': 'log_ROISFIX',
     'Nominal_Percent_Rate': 'log_Nominal_Percent_Rate'
@@ -1006,8 +1007,9 @@ for var, log_name in log_vars.items():
         df_log[log_name] = np.log(df_taylor[var])
             
 # Не логарифмируем т.к. в % и есть значения <0
-no_log_vars = ['Inflation_gap', 'Ent_conf_ind_total']
+no_log_vars = ['Inflation_gap', 'Ent_conf_ind_total', 'Expected_Inflation_12m']
 df_log['Inflation_gap'] = df_taylor['Inflation_gap']
+df_log['Expected_Inflation_12m'] = df_taylor['Expected_Inflation_12m']
 df_log['Ent_conf_ind_total'] = df_taylor['Ent_conf_ind_total']
 
 df_diff = df_log.copy()
@@ -1031,8 +1033,6 @@ df_diff = df_diff.dropna()
 df_diff.head()
 
 
-
-
 ###############################
     #Тесты на стационарность для I(1) переменных
 ###############################
@@ -1047,8 +1047,10 @@ for var in diff_vars:
 stationarity_df_diff = pd.DataFrame(stationarity_results_diff)
 print(stationarity_df_diff.to_string())
 
-
 df_taylor = df_diff.copy()
+
+
+
 ###############################
 # Тест Льюинга-Бокса для I(1) переменных
 ###############################
@@ -1272,6 +1274,8 @@ if problematic_series:
 else:
     print("\n✓ Нет проблемных рядов - все переменные имеют приемлемый уровень автокорреляции!")
 
+
+
 ###############################
 # ОПИСАТЕЛЬНЫЕ СТАТИСТИКИ - ОБРАБОТАННЫЕ ДАННЫЕ
 ###############################
@@ -1322,3 +1326,226 @@ fig.set_xticklabels(fig.get_xticklabels(),
                    fontsize=12)
 
 plt.tight_layout()
+
+
+
+###############################
+    #VIF-анализ - обработанные данные
+###############################
+
+vif_variables = [
+    'D_log_ROISFIX',
+    'D_Inflation_gap',
+    'D_log_Nominal_Percent_Rate',
+    'D_Ent_conf_ind_total'
+]
+df_vif = df_taylor[vif_variables].copy()
+df_vif = df_vif.dropna()
+
+X_vif = sm.add_constant(df_vif[vif_variables])
+
+# Расчет VIF
+vif_data = pd.DataFrame()
+vif_data["Variable"] = vif_variables
+vif_data["VIF"] = [variance_inflation_factor(X_vif.values, i+1) for i in range(len(vif_variables))]
+vif_data = vif_data.sort_values('VIF', ascending=False)
+
+print("\n" + "="*80)
+print("РЕЗУЛЬТАТЫ VIF АНАЛИЗА - ОБРАБОТАННЫЕ ДАННЫЕ")
+print("="*80)
+print(vif_data.to_string(index=False))
+
+
+###############################
+    #Тест Йохансена на поиск коинтегрирующего соотношения
+###############################
+print("\n" + "="*60)
+print("ТЕСТ ЙОХАНСЕНА")
+print("="*60)
+
+# === ДАННЫЕ В УРОВНЯХ ===
+df_johansen = df_RF[['ROISFIX', 'Inflation_gap', 'Nominal_Percent_Rate', 'Ent_conf_ind_total']].dropna()
+
+print(f"\nДанные: {len(df_johansen)} наблюдений")
+print(f"Период: {df_RF['Date'].min()} - {df_RF['Date'].max()}")
+
+# === ТЕСТ ЙОХАНСЕНА ===
+print("\n" + "="*70)
+print("Тестирование на коинтеграцию используемых временных рядов")
+print("Результаты проведения теста Йохансена на поиск коинтегрирующего соотношения")
+print("Статистика Trace Value")
+print("="*60)
+
+johansen = coint_johansen(df_johansen, det_order=0, k_ar_diff=1)
+
+# Таблица результатов Trace test
+print(f"\n{'r':<6} {'Test':<10} {'10%':<10} {'5%':<10} {'1%':<10} {'Result':<15}")
+print("-"*65)
+
+rank = 0
+k = len(df_johansen.columns)
+
+for r in range(k):
+    stat = johansen.lr1[r]
+    crit_10 = johansen.cvt[r, 0]
+    crit_5 = johansen.cvt[r, 1]
+    crit_1 = johansen.cvt[r, 2]
+    
+    # ПРАВИЛЬНАЯ логика определения ранга:
+    # H0: ранг коинтеграции <= r
+    # H1: ранг коинтеграции > r
+    
+    if stat > crit_5:
+        result_text = "✓ Reject H0"
+    else:
+        result_text = "✗ Accept H0"
+        rank = r
+        break
+else:
+    # Если отвергли все гипотезы (для всех r от 0 до k-1), то ранг = k
+    rank = k
+
+print(f"{r:<6} {stat:<10.2f} {crit_10:<10.2f} {crit_5:<10.2f} {crit_1:<10.2f} {result_text:<15}")
+
+# ВЫВОДИМ ВСЕ СТРОКИ ТАБЛИЦЫ ДЛЯ ПРОЗРАЧНОСТИ
+for r_display in range(k):
+    if r_display != r:  
+        stat_display = johansen.lr1[r_display]
+        crit_10_display = johansen.cvt[r_display, 0]
+        crit_5_display = johansen.cvt[r_display, 1]
+        crit_1_display = johansen.cvt[r_display, 2]
+        
+        if stat_display > crit_5_display:
+            result_text_display = "✓ Reject H0"
+        else:
+            result_text_display = "✗ Accept H0"
+            
+        print(f"{r_display:<6} {stat_display:<10.2f} {crit_10_display:<10.2f} {crit_5_display:<10.2f} {crit_1_display:<10.2f} {result_text_display:<15}")
+
+print(f"\n→ Ранг коинтеграции: r = {rank}")
+
+# === ЛИНЕЙНАЯ КОМБИНАЦИЯ ИССЛЕДУЕМЫХ РЯДОВ ===
+print("\n" + "="*70)
+print("Линейная комбинация исследуемых рядов")
+print("="*70)
+
+if rank > 0:
+    # Нормализуем первый собственный вектор (коинтеграционный вектор)
+    beta = johansen.evec[:, 0].copy()
+    beta = beta / beta[0]
+
+    print(f"\nКоинтеграционный вектор (β):")
+    print(f"(долгосрочное равновесное соотношение)\n")
+
+    # Названия переменных как в таблице
+    var_display_names = [
+        'Key_Rate_t',
+        'Inflation_Expectations_12m_t', 
+        'Output_Gap_t',
+        'Neutral_Rate_t'
+    ]
+
+    for i, display_name in enumerate(var_display_names):
+        coef = beta[i]
+        print(f"{display_name:<35} {coef:>15.7f}")
+else:
+    print("\nКоинтеграционные векторы не найдены")
+
+
+###############################
+    #Подготовка финального датасета (добавляем дамми)
+###############################
+
+df_taylor['Covid_dum'] = df_RF['Covid_dum']
+df_taylor['Sank_dum'] = df_RF['Sank_dum']
+df_taylor['D_log_ROISFIX_lag'] = df_taylor['D_log_ROISFIX'].shift(1)
+df_taylor = df_taylor.dropna()
+df_taylor.head()
+
+
+###############################
+# Тест White и Breusch-Pagan на гетероскедастичность
+###############################
+
+from statsmodels.stats.diagnostic import het_white, het_breuschpagan
+import statsmodels.api as sm
+
+print("\n" + "="*60)
+print("ТЕСТЫ НА ГЕТЕРОСКЕДАСТИЧНОСТЬ: WHITE И BREUSCH-PAGAN")
+print("="*60)
+
+# Подготавливаем данные для регрессии
+X = sm.add_constant(df_taylor[['D_Inflation_gap', 'D_log_Nominal_Percent_Rate', 'D_Ent_conf_ind_total']])
+y = df_taylor['D_log_ROISFIX']
+
+# Строим базовую модель OLS
+model_ols = sm.OLS(y, X).fit()
+
+# Получаем остатки
+residuals = model_ols.resid
+
+print("\nРегрессионная модель:")
+print(f"Зависимая переменная: D_log_ROISFIX")
+print(f"Количество наблюдений: {len(y)}")
+print(f"R-squared: {model_ols.rsquared:.4f}")
+
+# === ТЕСТ BREUSCH-PAGAN ===
+print("\n" + "-"*60)
+print("ТЕСТ BREUSCH-PAGAN")
+print("-"*60)
+print("H0: Гомоскедастичность (константная дисперсия)")
+print("H1: Гетероскедастичность (переменная дисперсия)\n")
+
+bp_stat, bp_pvalue, bp_f_stat, bp_f_pvalue = het_breuschpagan(residuals, X)
+
+print(f"LM-статистика Breusch-Pagan: {bp_stat:.4f}")
+print(f"P-значение (LM): {bp_pvalue:.6f}")
+print(f"F-статистика: {bp_f_stat:.4f}")
+print(f"P-значение (F): {bp_f_pvalue:.6f}")
+
+if bp_pvalue < 0.05:
+    print("\n✗ ОТКЛОНЯЕМ H0: ОБНАРУЖЕНА ГЕТЕРОСКЕДАСТИЧНОСТЬ (p < 0.05)")
+else:
+    print("\n✓ ПРИНИМАЕМ H0: НЕТ ЗНАЧИМОЙ ГЕТЕРОСКЕДАСТИЧНОСТИ (p > 0.05)")
+
+# === ТЕСТ WHITE ===
+print("\n" + "-"*80)
+print("ТЕСТ WHITE")
+print("-"*80)
+print("H0: Гомоскедастичность (константная дисперсия)")
+print("H1: Гетероскедастичность (переменная дисперсия)\n")
+
+# ИСПРАВЛЕНО: het_white() возвращает 4 значения!
+white_stat, white_pvalue, white_df, white_fitted = het_white(residuals, X)
+
+print(f"LM-статистика White: {white_stat:.4f}")
+print(f"P-значение: {white_pvalue:.6f}")
+print(f"Степени свободы: {white_df}")
+
+if white_pvalue < 0.05:
+    print("\n✗ ОТКЛОНЯЕМ H0: ОБНАРУЖЕНА ГЕТЕРОСКЕДАСТИЧНОСТЬ (p < 0.05)")
+else:
+    print("\n✓ ПРИНИМАЕМ H0: НЕТ ЗНАЧИМОЙ ГЕТЕРОСКЕДАСТИЧНОСТИ (p > 0.05)")
+
+# === СВОДНАЯ ТАБЛИЦА ===
+print("\n" + "="*60)
+print("СВОДНАЯ ТАБЛИЦА РЕЗУЛЬТАТОВ")
+print("="*60)
+
+summary_heteroscedasticity = pd.DataFrame({
+    'Тест': ['Breusch-Pagan (LM)', 'Breusch-Pagan (F)', 'White'],
+    'Статистика': [f"{bp_stat:.4f}", f"{bp_f_stat:.4f}", f"{white_stat:.4f}"],
+    'P-значение': [f"{bp_pvalue:.6f}", f"{bp_f_pvalue:.6f}", f"{white_pvalue:.6f}"],
+    'Вывод': [
+        '✗ Гетероскедастичность' if bp_pvalue < 0.05 else '✓ Гомоскедастичность',
+        '✗ Гетероскедастичность' if bp_f_pvalue < 0.05 else '✓ Гомоскедастичность',
+        '✗ Гетероскедастичность' if white_pvalue < 0.05 else '✓ Гомоскедастичность'
+    ]
+})
+
+print(summary_heteroscedasticity.to_string(index=False))
+
+
+
+
+
