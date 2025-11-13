@@ -1,6 +1,7 @@
 !pip install arch
 !pip install rpy2
 
+
 import pandas as pd
 import numpy as np
 import statsmodels.api as sm
@@ -15,10 +16,13 @@ warnings.filterwarnings('ignore')
 import arch.unitroot as au
 from statsmodels.stats.outliers_influence import variance_inflation_factor
 from scipy.stats import friedmanchisquare
+from statsmodels.stats.diagnostic import acorr_ljungbox
+from statsmodels.graphics.tsaplots import plot_acf, plot_pacf
+
 
 
 ###############################
-    #ЗАГРУЗКА + ПРЕДОБРАБОТКА ДАННЫХ
+    #ЗАГРУЗКА + ПРЕДЛОБРАБОТКА ДАННЫХ
 ###############################
 df_reg = pd.read_excel('База данных_рег и фед показатели.xlsx', skiprows=1, sheet_name = 'data')
 df_RF = pd.read_excel('База данных_рег и фед показатели.xlsx', skiprows=1, sheet_name = 'data_RF')
@@ -26,11 +30,13 @@ households_structure = pd.read_excel('База_соц эконом неодно�
 households_loans = pd.read_excel('База_соц эконом неоднор регионов.xlsx', sheet_name = 'КЖН (рейтинг)')
 funds_coefficient = pd.read_excel('База_соц эконом неоднор регионов.xlsx', skiprows=2, sheet_name = 'Коэф фондов')
 
-# Преобразование даты
+
+# Преобразование даты 
 df_RF['Date'] = pd.to_datetime(df_RF['Date'])
 df_RF = df_RF.sort_values('Date')
 df_reg['Date'] = pd.to_datetime(df_reg['Date'])
 df_reg = df_reg.sort_values(['Num_reg','Date'])
+
 
 ###############################
 # Подсчет ожидаемого уровня инфляции за 12 месяцев
@@ -84,6 +90,7 @@ df_RF = calculate_expected_inflation_12m(
 df_RF = df_RF.drop(['i_1', 'i_2'], axis=1)
 
 
+
 ###############################
 # ОПИСАТЕЛЬНЫЕ СТАТИСТИКИ - ИСХОДНЫЕ ДАННЫЕ
 ###############################
@@ -135,6 +142,7 @@ fig.set_xticklabels(fig.get_xticklabels(),
                    fontsize=12)
 
 plt.tight_layout()
+
 
 ###############################
     #VIF-анализ
@@ -231,6 +239,7 @@ def friedman_seasonality_test(df, date_col='Date', value_col='Variable',
             'error': str(e)
         }
 
+
 # Применяем тест
 
 friedman_results = []
@@ -261,6 +270,7 @@ print("РЕЗУЛЬТАТЫ ТЕСТОВ ФРИДМАНА")
 print("="*80)
 print(friedman_summary.to_string(index=False))
 
+    
 ###############################
 # Сезонная корректировка через X-13 в R 
 ###############################
@@ -308,12 +318,13 @@ for pkg in required_packages:
 
 #  Переменные для сезонной корректировки 
 x13_variables = {
-    'Expected_Inflation_12m': 'Ожидаемая инфляция (12м)',
+    #'Expected_Inflation_12m': 'Ожидаемая инфляция (12м)',
     'Ent_conf_ind_mining': 'Индекс уверенности (добыча)',
     'Ent_conf_ind_manufactoring': 'Индекс уверенности (обработка)'
 }
 
-os.makedirs("x13_logs", exist_ok=True)    
+os.makedirs("x13_logs", exist_ok=True)
+
 
 #  Основной цикл сезонной корректировки 
 
@@ -408,7 +419,7 @@ for col in x13_variables.keys():
         if new_col in df_RF.columns:
             added_columns.append(new_col)
             non_na_count = df_RF[new_col].notna().sum()
-            print(f"✅ {new_col}: {non_na_count} не-NaN значений")
+            print(f"{new_col}: {non_na_count} не-NaN значений")
 
 print(f"\n Всего добавлено столбцов: {len(added_columns)}")
 
@@ -480,6 +491,834 @@ for col, name in x13_variables.items():
             plt.tight_layout()
             plt.show()
 
-print("\n СЕЗОННАЯ КОРРЕКЦИЯ ЗАВЕРШЕНА!")
 print(" Все скорректированные ряды добавлены в df_RF")
 print(" Столбцы с суффиксами: _adj, _trend, _seasonal")
+
+
+
+##############################
+# Тест Фридмана для рядов, скорректированных на сезонность
+##############################
+
+variables_for_analysis = [
+    ('Ent_conf_ind_mining_adj', 'Индекс уверенности (добыча)'),
+    ('Ent_conf_ind_manufactoring_adj', 'Индекс уверенности (обработка)')
+]
+
+def friedman_seasonality_test(df, date_col='Date', value_col='Variable', 
+                              test_name=None):
+
+    df_test = df.copy()
+    df_test['Month'] = df_test[date_col].dt.month
+    df_test['Year'] = df_test[date_col].dt.year
+    
+    # Перевод в таблицу: года × месяцы
+    pivot_data = df_test.pivot(index='Year', columns='Month', values=value_col)
+    
+    # Удаляем строки с NaN (неполные годы)
+    pivot_data = pivot_data.dropna()
+    
+    # Проверяем достаточность данных
+    if len(pivot_data) < 3:
+        print(f"{test_name}: Недостаточно лет ({len(pivot_data)}), минимум 3")
+        return {
+            'variable': test_name if test_name else value_col,
+            'chi_squared': np.nan,
+            'p_value': np.nan,
+            'has_seasonality': np.nan,
+            'n_years': len(pivot_data),
+            'n_months': len(pivot_data.columns),
+            'error': 'Недостаточно данных'
+        }
+    
+    try:
+        # Тест Фридмана
+        stat, p_value = friedmanchisquare(*[pivot_data[m].values for m in pivot_data.columns])
+        
+        # Определяем наличие сезонности
+        has_seasonality = p_value < 0.05
+        
+        return {
+            'variable': test_name if test_name else value_col,
+            'chi_squared': stat,
+            'p_value': p_value,
+            'has_seasonality': has_seasonality,
+            'n_years': len(pivot_data),
+            'n_months': len(pivot_data.columns),
+            'error': None
+        }
+    
+    except Exception as e:
+        print(f"Ошибка для {test_name}: {str(e)}")
+        return {
+            'variable': test_name if test_name else value_col,
+            'chi_squared': np.nan,
+            'p_value': np.nan,
+            'has_seasonality': np.nan,
+            'n_years': len(pivot_data),
+            'n_months': len(pivot_data.columns),
+            'error': str(e)
+        }
+
+
+
+# Применяем тест
+
+friedman_results = []
+
+for var_col, var_name in variables_for_analysis:
+    if var_col in df_RF.columns:
+        result = friedman_seasonality_test(df_RF, date_col='Date', 
+                                          value_col=var_col, 
+                                          test_name=var_name)
+        if result:
+            friedman_results.append(result)
+
+# Сохраняем результаты Фридмана
+friedman_summary = pd.DataFrame([
+    {
+        'Variable': r['variable'],
+        'Chi_Squared': r['chi_squared'],
+        'P_Value': r['p_value'],
+        'Has_Seasonality': r['has_seasonality'],
+        'N_Years': r['n_years'],
+        'N_Months': r['n_months']
+    } 
+    for r in friedman_results
+])
+
+print("\n" + "="*80)
+print("РЕЗУЛЬТАТЫ ТЕСТОВ ФРИДМАНА")
+print("="*80)
+print(friedman_summary.to_string(index=False))
+
+    
+
+print("\n" + "="*60)
+print("РАСЧЕТ ИНДЕКСА ПРЕДПРИНИМАТЕЛЬСКОЙ УВЕРЕННОСТИ")
+print("="*60)
+
+# Веса по доле в структуре промышленности РФ (2023 г.)
+weights = {
+    'mining': 0.47,              # Добывающая промышленность: 47%
+    'manufacturing': 0.53        # Обрабатывающая промышленность: 53%
+}
+
+mining_col = 'Ent_conf_ind_mining_adj'
+manuf_col = 'Ent_conf_ind_manufactoring_adj'
+
+# Проверяем доступность
+mining_available = mining_col in df_RF.columns
+manuf_available = manuf_col in df_RF.columns
+
+
+if mining_available and manuf_available:
+    # Берем скорректированные данные
+    mining_series = df_RF[mining_col].copy()
+    manuf_series = df_RF[manuf_col].copy()
+    
+    # Расчет взвешенного среднего
+    df_RF['Ent_conf_ind_total'] = (
+        weights['mining'] * mining_series + 
+        weights['manufacturing'] * manuf_series
+    )    
+
+# Корреляция итогового индекса с компонентами
+corr_total_mining = df_RF['Ent_conf_ind_total'].corr(mining_series)
+corr_total_manuf = df_RF['Ent_conf_ind_total'].corr(manuf_series)
+
+print(f"\nКорреляция итогового индекса с компонентами:")
+print(f"  Итоговый - Добыча: {corr_total_mining:.4f}")
+print(f"  Итоговый - Обработка: {corr_total_manuf:.4f}")
+
+
+fig, ax1 = plt.subplots(figsize=(15, 6))
+
+# График: Компоненты и итоговый индекс
+ax1.plot(df_RF['Date'], mining_series, 
+         label='Добывающая промышленность', linewidth=2, alpha=0.8, color='steelblue')
+ax1.plot(df_RF['Date'], manuf_series, 
+         label='Обрабатывающая промышленность', linewidth=2, alpha=0.8, color='orange')
+ax1.plot(df_RF['Date'], df_RF['Ent_conf_ind_total'], 
+         label='Итоговый индекс', 
+         linewidth=2.5, color='darkred', linestyle='-', marker='o', markersize=3)
+
+ax1.set_title('Индекс предпринимательской уверенности: компоненты и агрегат', 
+              fontsize=13, fontweight='bold', pad=15)
+ax1.legend(loc='best', fontsize=11, framealpha=0.95)
+ax1.grid(alpha=0.3, linestyle='--')
+ax1.set_ylabel('Индекс', fontsize=11)
+ax1.set_xlabel('Дата', fontsize=11)
+ax1.tick_params(axis='both', labelsize=10)
+
+plt.tight_layout()
+plt.show()
+
+
+target_inflation = 4.0
+df_RF['Inflation_gap'] =  df_RF['Expected_Inflation_12m'] - target_inflation
+
+fig, ax1 = plt.subplots(figsize=(15, 6))
+ax1.plot(df_RF['Date'], df_RF['Inflation_gap'], 
+         label='Инфляционный разрыв', 
+         linewidth=2.5, color='darkred', linestyle='-', marker='o', markersize=3)
+ax1.set_title('Инфляционный разрыв', 
+              fontsize=13, fontweight='bold', pad=15)
+ax1.legend(loc='best', fontsize=11, framealpha=0.95)
+ax1.grid(alpha=0.3, linestyle='--')
+ax1.set_ylabel('%', fontsize=11)
+ax1.set_xlabel('Дата', fontsize=11)
+ax1.tick_params(axis='both', labelsize=10)
+
+df_taylor = df_RF[['Date','ROISFIX', 'Inflation_gap', 'Nominal_Percent_Rate', 'Ent_conf_ind_total']]
+
+
+
+
+##############################
+# Тест Льюинга-Бокса до перехода к разностям
+###############################
+
+# === ПЕРЕМЕННЫЕ ДЛЯ ТЕСТА ===
+test_variables = {
+    'ROISFIX': 'Ставка ROISFIX',
+    'Inflation_gap': 'Инфляционный разрыв',
+    'Nominal_Percent_Rate': 'Нейтральная ставка',
+    'Ent_conf_ind_total': 'Индекс уверенности'
+}
+
+# === ФУНКЦИЯ 1: Определяет какой ряд использовать (adj или исходный) ===
+def get_series_for_test(df, col_name):
+    """
+    Проверяет наличие скорректированного ряда (_adj).
+    Если есть → возвращает его, иначе возвращает исходный.
+    
+    Returns:
+    --------
+    tuple: (series, source_type)
+        series : pd.Series - временной ряд
+        source_type : str - "Сезонно-скорректированный" или "Исходный"
+    """
+    
+    adj_col = f'{col_name}_adj'
+    
+    # Проверяем наличие adj столбца и его наполненность
+    if adj_col in df.columns:
+        adj_series = df[adj_col].dropna()
+        if len(adj_series) > 0:
+            return adj_series, "Сезонно-скорректированный"
+    
+    # Если adj не существует или пуст - берем исходный
+    original_series = df[col_name].dropna()
+    return original_series, "Исходный"
+
+# === ФУНКЦИЯ 2: Тест Льюинга-Бокса ===
+def optimized_ljung_box_test(series, name, source_type, max_lags=None):
+    """
+    Тест Льюинга-Бокса с автоматическим подбором лагов
+    
+    Parameters:
+    -----------
+    series : pd.Series или array-like
+        Временной ряд для тестирования
+    name : str
+        Название переменной
+    source_type : str
+        "Сезонно-скорректированный" или "Исходный"
+    max_lags : int, optional
+        Максимальное количество лагов
+    
+    Returns:
+    --------
+    dict : результаты теста
+    """
+    
+    if len(series) < 30:
+        lags = min(10, len(series) - 1)
+    else:
+        # Автоматический подбор лагов: sqrt(n) + 10 для месячных данных
+        lags = min(int(np.sqrt(len(series))) + 10, len(series) - 1)
+    
+    if max_lags:
+        lags = min(lags, max_lags)
+    
+    # Минимальное количество лагов для теста
+    lags = max(5, lags)
+    
+    try:
+        # Основной тест на выбранных лагах
+        result = acorr_ljungbox(series, lags=[lags], return_df=True)
+        lb_stat = result['lb_stat'].iloc[0]
+        lb_pvalue = result['lb_pvalue'].iloc[0]
+        
+        # Дополнительно проверяем несколько ключевых лагов
+        key_lags = [1, 3, 6, 12]
+        key_results = []
+        
+        for lag in key_lags:
+            if lag <= lags:
+                res = acorr_ljungbox(series, lags=[lag], return_df=True)
+                key_results.append({
+                    'lag': lag,
+                    'pvalue': res['lb_pvalue'].iloc[0]
+                })
+        
+        return {
+            'name': name,
+            'source_type': source_type,
+            'n_obs': len(series),
+            'test_lags': lags,
+            'lb_statistic': lb_stat,
+            'p_value': lb_pvalue,
+            'is_white_noise': lb_pvalue > 0.05,
+            'key_lags_results': key_results,
+            'series': series  # для визуализации
+        }
+    
+    except Exception as e:
+        print(f"Ошибка в тесте для {name} ({source_type}): {e}")
+        return None
+
+# === ОСНОВНОЙ АНАЛИЗ ===
+
+
+ljungbox_results = []
+problematic_series = []
+
+for col, name in test_variables.items():
+    if col not in df_taylor.columns:
+        print(f"✗ {name}: столбец '{col}' не найден в df_taylor")
+        continue
+    
+    # Определяем какой ряд использовать
+    series, source_type = get_series_for_test(df_taylor, col)
+    
+    if len(series) < 10:
+        print(f"✗ {name}: недостаточно данных (n={len(series)})")
+        continue
+    
+    # Выполняем тест
+    result = optimized_ljung_box_test(series, name, source_type)
+    
+    if result:
+        ljungbox_results.append(result)
+
+# === ВЫВОД РЕЗУЛЬТАТОВ ===
+
+print("\n" + "="*70)
+print("РЕЗУЛЬТАТЫ ТЕСТА ЛЬЮИНГА-БОКСА")
+print("="*70)
+
+if ljungbox_results:
+    for i, result in enumerate(ljungbox_results, 1):
+        print(f"\n{i}. {result['name']}")
+        print(f"   Тип данных: {result['source_type']}")
+        print(f"   Наблюдения: {result['n_obs']}")
+        print(f"   Тестовые лаги: {result['test_lags']}")
+        print(f"   Ljung-Box статистика: {result['lb_statistic']:.3f}")
+        print(f"   P-значение: {result['p_value']:.6f}")
+        
+        if result['is_white_noise']:
+            print(f"   ✓ ОСТАТКИ БЕЗ АВТОКОРРЕЛЯЦИИ (p > 0.05)")
+        else:
+            print(f"   ✗ ОБНАРУЖЕНА АВТОКОРРЕЛЯЦИЯ (p < 0.05)")
+            problematic_series.append(result)
+        
+        # Ключевые лаги
+        print(f"   Ключевые лаги:")
+        for key_res in result['key_lags_results']:
+            sig_mark = "✓" if key_res['pvalue'] > 0.05 else "✗"
+            print(f"     Лаг {key_res['lag']:2d}: p={key_res['pvalue']:.6f} {sig_mark}")
+
+# === СВОДНАЯ ТАБЛИЦА ===
+
+if ljungbox_results:
+    print("\n" + "="*70)
+    print("СВОДНАЯ ТАБЛИЦА")
+    print("="*70)
+    
+    summary_data = []
+    for result in ljungbox_results:
+        # Подсчитываем количество значимых лагов из ключевых
+        sig_lags = sum(1 for res in result['key_lags_results'] if res['pvalue'] < 0.05)
+        total_lags = len(result['key_lags_results'])
+        
+        # Определяем статус
+        if result['is_white_noise']:
+            status = "✓ OK"
+        elif sig_lags <= 2:
+            status = "⚠ Приемлемо"
+        else:
+            status = "✗ Проблема"
+        
+        summary_data.append({
+            'Переменная': result['name'],
+            'Тип данных': result['source_type'],
+            'N': result['n_obs'],
+            'P-значение': f"{result['p_value']:.6f}",
+            'Значимые лаги': f"{sig_lags}/{total_lags}",
+            'Статус': status
+        })
+    
+    summary_df = pd.DataFrame(summary_data)
+    print(summary_df.to_string(index=False))
+
+# === ВИЗУАЛИЗАЦИЯ ACF/PACF ДЛЯ ПРОБЛЕМНЫХ РЯДОВ ===
+
+print("\n" + "="*70)
+print("ВИЗУАЛИЗАЦИЯ ACF/PACF")
+print("="*70)
+
+# Визуализируем только для проблемных рядов
+if problematic_series:
+    for result in problematic_series:
+        col_name = None
+        for col, name in test_variables.items():
+            if name == result['name']:
+                col_name = col
+                break
+        
+        if col_name:
+            series = result['series']
+            
+            fig, axes = plt.subplots(1, 2, figsize=(14, 4))
+            
+            # ACF
+            plot_acf(series, lags=min(20, len(series)-1), ax=axes[0], alpha=0.05)
+            axes[0].set_title(f'ACF: {result["name"]} ({result["source_type"]})')
+            axes[0].grid(alpha=0.3)
+            
+            # PACF
+            plot_pacf(series, lags=min(20, len(series)-1), ax=axes[1], alpha=0.05)
+            axes[1].set_title(f'PACF: {result["name"]} ({result["source_type"]})')
+            axes[1].grid(alpha=0.3)
+            
+            plt.tight_layout()
+            plt.show()
+else:
+    print("\n✓ Нет проблемных рядов - все переменные имеют приемлемый уровень автокорреляции!")
+
+
+
+
+###############################
+    #Тесты на стационарность до перехода к разностям
+###############################
+variables_to_test = [
+    'ROISFIX',
+    'Inflation_gap',
+    'Nominal_Percent_Rate',
+    'Ent_conf_ind_total'
+]
+
+df_test = df_taylor[variables_to_test]
+
+def stationarity_tests(series, name):
+    series_clean = series.dropna()
+    #ADF
+    try:
+        adf_result = adfuller(series_clean, autolag = 'BIC')
+        adf_stat = adf_result[0]
+        adf_pvalue = adf_result[1]
+        adf_critical_one = adf_result[4]['1%']
+        adf_critical_five = adf_result[4]['5%']
+        adf_critical_ten = adf_result[4]['10%']
+        adf_stationary = adf_pvalue < 0.05
+    except Exception as e:
+        adf_stat, adf_pvalue, adf_critical_one, adf_critical_five, adf_critical_ten, adf_stationary = (
+            np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
+        )
+
+    #KPSS
+    try:
+        kpss_result = kpss(series_clean, regression='c', nlags='auto')
+        kpss_stat = kpss_result[0]
+        kpss_pvalue = kpss_result[1]
+        kpss_critical_one = kpss_result[3]['1%']
+        kpss_critical_five = kpss_result[3]['5%']
+        kpss_critical_ten = kpss_result[3]['10%']
+        kpss_stationary = kpss_pvalue > 0.05  # H0: stationary
+    except:
+        kpss_stat, kpss_pvalue, kpss_critical_one, kpss_critical_five, kpss_critical_ten, kpss_stationary = (
+            np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
+        )
+  #DF-GLS
+    try:
+        DF_GLS_result = au.DFGLS(series_clean, trend='c', max_lags = 2, method = 'bic')
+        DF_GLS_stat = DF_GLS_result.stat
+        DF_GLS_pvalue = DF_GLS_result.pvalue
+        DF_GLS_critical_one =  DF_GLS_result.critical_values['1%']
+        DF_GLS_critical_five = DF_GLS_result.critical_values['5%']
+        DF_GLS_critical_ten = DF_GLS_result.critical_values['10%']
+        DF_GLS_stationary = DF_GLS_pvalue < 0.05  
+    except:
+        DF_GLS_stat, DF_GLS_pvalue, DF_GLS_critical_one, DF_GLS_critical_five, DF_GLS_critical_ten, DF_GLS_stationary = (
+            np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
+        )  
+    return {
+        'Variable': name,
+        #ADF
+        'ADF_Statistic': adf_stat,
+        'ADF_p_value': adf_pvalue,
+        'ADF_Critical_1%': adf_critical_one,
+        'ADF_Critical_5%': adf_critical_five,
+        'ADF_Critical_10%': adf_critical_ten,
+        'ADF_Stationary': adf_stationary,
+        #KPSS
+        'KPSS_Statistic': kpss_stat,
+        'KPSS_p_value': kpss_pvalue,
+        'KPSS_Critical_1%': kpss_critical_one,
+        'KPSS_Critical_5%': kpss_critical_five,
+        'KPSS_Critical_10%': kpss_critical_ten,
+        'KPSS_Stationary': kpss_stationary,
+        # DF-GLS
+        'DF_GLS_Statistic': DF_GLS_stat,
+        'DF_GLS_p_value': DF_GLS_pvalue,
+        'DF_GLS_Critical_1%': DF_GLS_critical_one,
+        'DF_GLS_Critical_5%': DF_GLS_critical_five,
+        'DF_GLS_Critical_10%': DF_GLS_critical_ten,
+        'DF_GLS_Stationary': DF_GLS_stationary
+    }
+stationarity_results = []
+for var in df_test.columns:
+    result = stationarity_tests(df_test[var], var)
+    stationarity_results.append(result)
+
+stationarity_df = pd.DataFrame(stationarity_results)
+print("\n" + "="*80)
+print("РЕЗУЛЬТАТЫ ТЕСТОВ НА СТАЦИОНАРНОСТЬ ДЛЯ НАЧАЛЬНЫХ ДАННЫХ")
+print("="*80)
+print(stationarity_df.to_string())
+
+
+
+
+
+log_vars = {
+    'ROISFIX': 'log_ROISFIX',
+    'Nominal_Percent_Rate': 'log_Nominal_Percent_Rate'
+}
+
+df_log = df_taylor[['Date'] + list(log_vars.keys())].copy()
+
+for var, log_name in log_vars.items():
+    if (df_taylor[var] > 0).all():
+        df_log[log_name] = np.log(df_taylor[var])
+            
+# Не логарифмируем т.к. в % и есть значения <0
+no_log_vars = ['Inflation_gap', 'Ent_conf_ind_total']
+df_log['Inflation_gap'] = df_taylor['Inflation_gap']
+df_log['Ent_conf_ind_total'] = df_taylor['Ent_conf_ind_total']
+
+df_diff = df_log.copy()
+
+# Первая разность логарифмов
+for log_name in df_log.columns[1:]:
+    if log_name.startswith('log_'):
+        diff_name = f"D_{log_name}"
+        df_diff[diff_name] = df_log[log_name].diff()
+
+# Первая разность не log
+for var in no_log_vars:
+    if var in df_log.columns:
+        diff_name = f"D_{var}"
+        df_diff[diff_name] = df_log[var].diff()
+
+columns_to_keep = ['Date'] + [f"D_{name}" for name in df_log.columns[1:] if name.startswith('log_')] + [f"D_{var}" for var in no_log_vars]
+df_diff = df_diff[columns_to_keep]
+
+df_diff = df_diff.dropna()
+df_diff.head()
+
+
+
+
+###############################
+    #Тесты на стационарность для I(1) переменных
+###############################
+diff_vars = [col for col in df_diff.columns if col.startswith('D_')]
+stationarity_results_diff = []
+
+
+for var in diff_vars:
+    result = stationarity_tests(df_diff[var], var)
+    stationarity_results_diff.append(result)
+
+stationarity_df_diff = pd.DataFrame(stationarity_results_diff)
+print(stationarity_df_diff.to_string())
+
+
+df_taylor = df_diff.copy()
+###############################
+# Тест Льюинга-Бокса для I(1) переменных
+###############################
+
+# === ПЕРЕМЕННЫЕ ДЛЯ ТЕСТА ===
+test_variables = {
+    'D_log_ROISFIX': 'Логарифм I(1) ставки ROISFIX',
+    'D_Inflation_gap': 'I(1) инфляционный разрыв',
+    'D_log_Nominal_Percent_Rate': 'Логарифм I(1) нейтральной ставки',
+    'D_Ent_conf_ind_total': 'I(1) индекс уверенности'
+}
+
+# === ФУНКЦИЯ 1: Определяет какой ряд использовать (adj или исходный) ===
+def get_series_for_test(df, col_name):
+    """
+    Проверяет наличие скорректированного ряда (_adj).
+    Если есть → возвращает его, иначе возвращает исходный.
+    
+    Returns:
+    --------
+    tuple: (series, source_type)
+        series : pd.Series - временной ряд
+        source_type : str - "Сезонно-скорректированный" или "Исходный"
+    """
+    
+    adj_col = f'{col_name}_adj'
+    
+    # Проверяем наличие adj столбца и его наполненность
+    if adj_col in df.columns:
+        adj_series = df[adj_col].dropna()
+        if len(adj_series) > 0:
+            return adj_series, "Сезонно-скорректированный"
+    
+    # Если adj не существует или пуст - берем исходный
+    original_series = df[col_name].dropna()
+    return original_series, "Исходный"
+
+# === ФУНКЦИЯ 2: Тест Льюинга-Бокса ===
+def optimized_ljung_box_test(series, name, source_type, max_lags=None):
+    """
+    Тест Льюинга-Бокса с автоматическим подбором лагов
+    
+    Parameters:
+    -----------
+    series : pd.Series или array-like
+        Временной ряд для тестирования
+    name : str
+        Название переменной
+    source_type : str
+        "Сезонно-скорректированный" или "Исходный"
+    max_lags : int, optional
+        Максимальное количество лагов
+    
+    Returns:
+    --------
+    dict : результаты теста
+    """
+    
+    if len(series) < 30:
+        lags = min(10, len(series) - 1)
+    else:
+        # Автоматический подбор лагов: sqrt(n) + 10 для месячных данных
+        lags = min(int(np.sqrt(len(series))) + 10, len(series) - 1)
+    
+    if max_lags:
+        lags = min(lags, max_lags)
+    
+    # Минимальное количество лагов для теста
+    lags = max(5, lags)
+    
+    try:
+        # Основной тест на выбранных лагах
+        result = acorr_ljungbox(series, lags=[lags], return_df=True)
+        lb_stat = result['lb_stat'].iloc[0]
+        lb_pvalue = result['lb_pvalue'].iloc[0]
+        
+        # Дополнительно проверяем несколько ключевых лагов
+        key_lags = [1, 3, 6, 12]
+        key_results = []
+        
+        for lag in key_lags:
+            if lag <= lags:
+                res = acorr_ljungbox(series, lags=[lag], return_df=True)
+                key_results.append({
+                    'lag': lag,
+                    'pvalue': res['lb_pvalue'].iloc[0]
+                })
+        
+        return {
+            'name': name,
+            'source_type': source_type,
+            'n_obs': len(series),
+            'test_lags': lags,
+            'lb_statistic': lb_stat,
+            'p_value': lb_pvalue,
+            'is_white_noise': lb_pvalue > 0.05,
+            'key_lags_results': key_results,
+            'series': series  # для визуализации
+        }
+    
+    except Exception as e:
+        print(f"Ошибка в тесте для {name} ({source_type}): {e}")
+        return None
+
+# === ОСНОВНОЙ АНАЛИЗ ===
+
+
+ljungbox_results = []
+problematic_series = []
+
+for col, name in test_variables.items():
+    if col not in df_taylor.columns:
+        print(f"✗ {name}: столбец '{col}' не найден в df_taylor")
+        continue
+    
+    # Определяем какой ряд использовать
+    series, source_type = get_series_for_test(df_taylor, col)
+    
+    if len(series) < 10:
+        print(f"✗ {name}: недостаточно данных (n={len(series)})")
+        continue
+    
+    # Выполняем тест
+    result = optimized_ljung_box_test(series, name, source_type)
+    
+    if result:
+        ljungbox_results.append(result)
+
+# === ВЫВОД РЕЗУЛЬТАТОВ ===
+
+print("\n" + "="*70)
+print("РЕЗУЛЬТАТЫ ТЕСТА ЛЬЮИНГА-БОКСА")
+print("="*70)
+
+if ljungbox_results:
+    for i, result in enumerate(ljungbox_results, 1):
+        print(f"\n{i}. {result['name']}")
+        print(f"   Тип данных: {result['source_type']}")
+        print(f"   Наблюдения: {result['n_obs']}")
+        print(f"   Тестовые лаги: {result['test_lags']}")
+        print(f"   Ljung-Box статистика: {result['lb_statistic']:.3f}")
+        print(f"   P-значение: {result['p_value']:.6f}")
+        
+        if result['is_white_noise']:
+            print(f"   ✓ ОСТАТКИ БЕЗ АВТОКОРРЕЛЯЦИИ (p > 0.05)")
+        else:
+            print(f"   ✗ ОБНАРУЖЕНА АВТОКОРРЕЛЯЦИЯ (p < 0.05)")
+            problematic_series.append(result)
+        
+        # Ключевые лаги
+        print(f"   Ключевые лаги:")
+        for key_res in result['key_lags_results']:
+            sig_mark = "✓" if key_res['pvalue'] > 0.05 else "✗"
+            print(f"     Лаг {key_res['lag']:2d}: p={key_res['pvalue']:.6f} {sig_mark}")
+
+# === СВОДНАЯ ТАБЛИЦА ===
+
+if ljungbox_results:
+    print("\n" + "="*70)
+    print("СВОДНАЯ ТАБЛИЦА")
+    print("="*70)
+    
+    summary_data = []
+    for result in ljungbox_results:
+        # Подсчитываем количество значимых лагов из ключевых
+        sig_lags = sum(1 for res in result['key_lags_results'] if res['pvalue'] < 0.05)
+        total_lags = len(result['key_lags_results'])
+        
+        # Определяем статус
+        if result['is_white_noise']:
+            status = "✓ OK"
+        elif sig_lags <= 2:
+            status = "⚠ Приемлемо"
+        else:
+            status = "✗ Проблема"
+        
+        summary_data.append({
+            'Переменная': result['name'],
+            'Тип данных': result['source_type'],
+            'N': result['n_obs'],
+            'P-значение': f"{result['p_value']:.6f}",
+            'Значимые лаги': f"{sig_lags}/{total_lags}",
+            'Статус': status
+        })
+    
+    summary_df = pd.DataFrame(summary_data)
+    print(summary_df.to_string(index=False))
+
+# === ВИЗУАЛИЗАЦИЯ ACF/PACF ДЛЯ ПРОБЛЕМНЫХ РЯДОВ ===
+
+print("\n" + "="*70)
+print("ВИЗУАЛИЗАЦИЯ ACF/PACF")
+print("="*70)
+
+# Визуализируем только для проблемных рядов
+if problematic_series:
+    for result in problematic_series:
+        col_name = None
+        for col, name in test_variables.items():
+            if name == result['name']:
+                col_name = col
+                break
+        
+        if col_name:
+            series = result['series']
+            
+            fig, axes = plt.subplots(1, 2, figsize=(14, 4))
+            
+            # ACF
+            plot_acf(series, lags=min(20, len(series)-1), ax=axes[0], alpha=0.05)
+            axes[0].set_title(f'ACF: {result["name"]} ({result["source_type"]})')
+            axes[0].grid(alpha=0.3)
+            
+            # PACF
+            plot_pacf(series, lags=min(20, len(series)-1), ax=axes[1], alpha=0.05)
+            axes[1].set_title(f'PACF: {result["name"]} ({result["source_type"]})')
+            axes[1].grid(alpha=0.3)
+            
+            plt.tight_layout()
+            plt.show()
+else:
+    print("\n✓ Нет проблемных рядов - все переменные имеют приемлемый уровень автокорреляции!")
+
+###############################
+# ОПИСАТЕЛЬНЫЕ СТАТИСТИКИ - ОБРАБОТАННЫЕ ДАННЫЕ
+###############################
+descriptive_df = df_taylor[[
+    'D_log_ROISFIX',
+    'D_Inflation_gap',
+    'D_log_Nominal_Percent_Rate',
+    'D_Ent_conf_ind_total'
+]]
+
+desc = descriptive_df.describe().round(3).T
+
+medians = descriptive_df.median()
+desc['median'] = medians.round(3)
+
+desc = desc.rename(columns={
+    'mean': 'Среднее',
+    'median': 'Медиана',
+    'std': 'ст. откл.',
+    'min': 'Мин.',
+    'max': 'Макс.',
+})
+
+print("\n" + "="*80)
+print("ОПИСАТЕЛЬНЫЕ СТАТИСТИКИ - ОБРАБОТАННЫЕ ДАННЫЕ")
+print("="*80)
+print(desc[['Среднее', 'Медиана', 'ст. откл.', 'Мин.', 'Макс.']])
+
+
+###############################
+# КОРРЕЛЯЦИОННАЯ МАТРИЦА - ОБРАБОТАННЫЕ ДАННЫЕ
+###############################
+dd = descriptive_df.corr()
+plt.figure(figsize=(12, 10))
+fig = sns.heatmap(dd, annot=True,
+                  fmt=".2f",
+                  linewidth=0.5,
+                  linecolor='white',
+                  annot_kws={"size": 10},
+                  cmap='coolwarm')
+
+fig.set_title("Корреляционная матрица (обработанные данные)",
+             fontsize=16, pad=20)
+
+fig.set_xticklabels(fig.get_xticklabels(),
+                   rotation=45,
+                   ha='right',
+                   fontsize=12)
+
+plt.tight_layout()
