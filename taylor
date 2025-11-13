@@ -18,7 +18,7 @@ from scipy.stats import friedmanchisquare
 
 
 ###############################
-    #ЗАГРУЗКА + ПРЕДЛОБРАБОТКА ДАННЫХ
+    #ЗАГРУЗКА + ПРЕДОБРАБОТКА ДАННЫХ
 ###############################
 df_reg = pd.read_excel('База данных_рег и фед показатели.xlsx', skiprows=1, sheet_name = 'data')
 df_RF = pd.read_excel('База данных_рег и фед показатели.xlsx', skiprows=1, sheet_name = 'data_RF')
