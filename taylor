@@ -1,0 +1,485 @@
+!pip install arch
+!pip install rpy2
+
+import pandas as pd
+import numpy as np
+import statsmodels.api as sm
+from statsmodels.formula.api import ols
+from statsmodels.stats.outliers_influence import variance_inflation_factor
+from statsmodels.tsa.stattools import adfuller, kpss
+from scipy import stats
+import matplotlib.pyplot as plt
+import seaborn as sns
+import warnings
+warnings.filterwarnings('ignore')
+import arch.unitroot as au
+from statsmodels.stats.outliers_influence import variance_inflation_factor
+from scipy.stats import friedmanchisquare
+
+
+###############################
+    #ЗАГРУЗКА + ПРЕДЛОБРАБОТКА ДАННЫХ
+###############################
+df_reg = pd.read_excel('База данных_рег и фед показатели.xlsx', skiprows=1, sheet_name = 'data')
+df_RF = pd.read_excel('База данных_рег и фед показатели.xlsx', skiprows=1, sheet_name = 'data_RF')
+households_structure = pd.read_excel('База_соц эконом неоднор регионов.xlsx', skiprows=1, sheet_name = 'Фин пол ДХ')
+households_loans = pd.read_excel('База_соц эконом неоднор регионов.xlsx', sheet_name = 'КЖН (рейтинг)')
+funds_coefficient = pd.read_excel('База_соц эконом неоднор регионов.xlsx', skiprows=2, sheet_name = 'Коэф фондов')
+
+# Преобразование даты
+df_RF['Date'] = pd.to_datetime(df_RF['Date'])
+df_RF = df_RF.sort_values('Date')
+df_reg['Date'] = pd.to_datetime(df_reg['Date'])
+df_reg = df_reg.sort_values(['Num_reg','Date'])
+
+###############################
+# Подсчет ожидаемого уровня инфляции за 12 месяцев
+###############################
+
+def calculate_expected_inflation_12m(df, date_col='Date', 
+                                     inflation_col='Inflation_Expectations'):
+    """
+    Расчет ожидаемой инфляции на 12 месяцев вперед
+    
+    Если данные на следующий год отсутствуют (последние 12 месяцев),
+    используются значения текущего года в качестве прокси
+    """
+    df_calc = df.copy()
+
+    df_calc['Month'] = df_calc[date_col].dt.month
+    df_calc['Year'] = df_calc[date_col].dt.year
+
+    # i_1 = количество месяцев до конца текущего года
+    df_calc['i_1'] = 12 - df_calc['Month'] + 1
+    
+    # i_2 = количество месяцев до конца следующего года
+    df_calc['i_2'] = 12 + df_calc['i_1']
+    
+    print(df_calc[['Date', 'Month', 'i_1', 'i_2']].head(10).to_string())
+
+    # Ожидаемая инфляция на конец текущего года
+    df_calc['pi_current_year'] = df_calc[inflation_col]
+    
+    # Ожидаемая инфляция на конец следующего года
+    df_calc['pi_next_year'] = df_calc[inflation_col].shift(-12)
+    
+    # Если нет данных на следующий год, используем значение текущего года в качестве прокси
+    df_calc['pi_next_year'] = df_calc['pi_next_year'].fillna(df_calc['pi_current_year'])
+    
+    print(df_calc[[date_col, 'pi_current_year', 'pi_next_year']].head(15).to_string())
+
+    # Расчет ожидаемой инфляции на 12 месяцев
+    df_calc['Expected_Inflation_12m'] = (
+        df_calc['pi_current_year'] + 
+        (12 - df_calc['i_1']) * (df_calc['pi_next_year'] - df_calc['pi_current_year']) / 12
+    )
+    
+    return df_calc
+
+
+df_RF = calculate_expected_inflation_12m(
+                df_RF,
+                date_col='Date',
+                inflation_col='Inflation_Expectations')
+df_RF = df_RF.drop(['i_1', 'i_2'], axis=1)
+
+
+###############################
+# ОПИСАТЕЛЬНЫЕ СТАТИСТИКИ - ИСХОДНЫЕ ДАННЫЕ
+###############################
+descriptive_df = df_RF[[
+    'ROISFIX',
+    'Expected_Inflation_12m',
+    'Nominal_Percent_Rate',
+    'Ent_conf_ind_mining',
+    'Ent_conf_ind_manufactoring'
+]]
+
+desc = descriptive_df.describe().round(3).T
+
+medians = descriptive_df.median()
+desc['median'] = medians.round(3)
+
+desc = desc.rename(columns={
+    'mean': 'Среднее',
+    'median': 'Медиана',
+    'std': 'ст. откл.',
+    'min': 'Мин.',
+    'max': 'Макс.',
+})
+
+print("\n" + "="*80)
+print("ОПИСАТЕЛЬНЫЕ СТАТИСТИКИ - ИСХОДНЫЕ ДАННЫЕ")
+print("="*80)
+print(desc[['Среднее', 'Медиана', 'ст. откл.', 'Мин.', 'Макс.']])
+
+
+###############################
+# КОРРЕЛЯЦИОННАЯ МАТРИЦА - ИСХОДНЫЕ ДАННЫЕ
+###############################
+dd = descriptive_df.corr()
+plt.figure(figsize=(12, 10))
+fig = sns.heatmap(dd, annot=True,
+                  fmt=".2f",
+                  linewidth=0.5,
+                  linecolor='white',
+                  annot_kws={"size": 10},
+                  cmap='coolwarm')
+
+fig.set_title("Корреляционная матрица (начальные данные)",
+             fontsize=16, pad=20)
+
+fig.set_xticklabels(fig.get_xticklabels(),
+                   rotation=45,
+                   ha='right',
+                   fontsize=12)
+
+plt.tight_layout()
+
+###############################
+    #VIF-анализ
+###############################
+
+vif_variables = [
+    'ROISFIX',
+    'Expected_Inflation_12m',
+    'Nominal_Percent_Rate',
+    'Ent_conf_ind_mining',
+    'Ent_conf_ind_manufactoring'
+]
+df_vif = df_RF[vif_variables].copy()
+df_vif = df_vif.dropna()
+
+X_vif = sm.add_constant(df_vif[vif_variables])
+
+# Расчет VIF
+vif_data = pd.DataFrame()
+vif_data["Variable"] = vif_variables
+vif_data["VIF"] = [variance_inflation_factor(X_vif.values, i+1) for i in range(len(vif_variables))]
+vif_data = vif_data.sort_values('VIF', ascending=False)
+
+print("\n" + "="*80)
+print("РЕЗУЛЬТАТЫ VIF АНАЛИЗА")
+print("="*80)
+print(vif_data.to_string(index=False))
+
+
+##############################
+# Тест Фридмана на сезонность
+##############################
+
+variables_for_analysis = [
+    ('ROISFIX', 'Ключевая ставка (ROISFIX)'),
+    ('Expected_Inflation_12m', 'Ожидаемая инфляция на 12м'),
+    ('Nominal_Percent_Rate', 'Номинальная ставка'),
+    ('Ent_conf_ind_mining', 'Индекс уверенности (добыча)'),
+    ('Ent_conf_ind_manufactoring', 'Индекс уверенности (обработка)')
+]
+
+def friedman_seasonality_test(df, date_col='Date', value_col='Variable', 
+                              test_name=None):
+
+    df_test = df.copy()
+    df_test['Month'] = df_test[date_col].dt.month
+    df_test['Year'] = df_test[date_col].dt.year
+    
+    # Перевод в таблицу: года × месяцы
+    pivot_data = df_test.pivot(index='Year', columns='Month', values=value_col)
+    
+    # Удаляем строки с NaN (неполные годы)
+    pivot_data = pivot_data.dropna()
+    
+    # Проверяем достаточность данных
+    if len(pivot_data) < 3:
+        print(f"{test_name}: Недостаточно лет ({len(pivot_data)}), минимум 3")
+        return {
+            'variable': test_name if test_name else value_col,
+            'chi_squared': np.nan,
+            'p_value': np.nan,
+            'has_seasonality': np.nan,
+            'n_years': len(pivot_data),
+            'n_months': len(pivot_data.columns),
+            'error': 'Недостаточно данных'
+        }
+    
+    try:
+        # Тест Фридмана
+        stat, p_value = friedmanchisquare(*[pivot_data[m].values for m in pivot_data.columns])
+        
+        # Определяем наличие сезонности
+        has_seasonality = p_value < 0.05
+        
+        return {
+            'variable': test_name if test_name else value_col,
+            'chi_squared': stat,
+            'p_value': p_value,
+            'has_seasonality': has_seasonality,
+            'n_years': len(pivot_data),
+            'n_months': len(pivot_data.columns),
+            'error': None
+        }
+    
+    except Exception as e:
+        print(f"Ошибка для {test_name}: {str(e)}")
+        return {
+            'variable': test_name if test_name else value_col,
+            'chi_squared': np.nan,
+            'p_value': np.nan,
+            'has_seasonality': np.nan,
+            'n_years': len(pivot_data),
+            'n_months': len(pivot_data.columns),
+            'error': str(e)
+        }
+
+# Применяем тест
+
+friedman_results = []
+
+for var_col, var_name in variables_for_analysis:
+    if var_col in df_RF.columns:
+        result = friedman_seasonality_test(df_RF, date_col='Date', 
+                                          value_col=var_col, 
+                                          test_name=var_name)
+        if result:
+            friedman_results.append(result)
+
+# Сохраняем результаты Фридмана
+friedman_summary = pd.DataFrame([
+    {
+        'Variable': r['variable'],
+        'Chi_Squared': r['chi_squared'],
+        'P_Value': r['p_value'],
+        'Has_Seasonality': r['has_seasonality'],
+        'N_Years': r['n_years'],
+        'N_Months': r['n_months']
+    } 
+    for r in friedman_results
+])
+
+print("\n" + "="*80)
+print("РЕЗУЛЬТАТЫ ТЕСТОВ ФРИДМАНА")
+print("="*80)
+print(friedman_summary.to_string(index=False))
+
+###############################
+# Сезонная корректировка через X-13 в R 
+###############################
+import rpy2.robjects as robjects
+from rpy2.robjects import pandas2ri, globalenv
+from rpy2.robjects.packages import importr, isinstalled
+from rpy2.robjects.conversion import localconverter
+import rpy2.rinterface_lib.callbacks
+import os
+
+# Создаем конвертер
+base_converter = robjects.default_converter + pandas2ri.converter
+
+#  Подавление вывода R 
+def suppress_r_output(x):
+    try:
+        if isinstance(x, bytes):
+            x = x.decode('utf-8', errors='ignore')
+    except:
+        pass
+
+rpy2.rinterface_lib.callbacks.consolewrite_print = suppress_r_output
+rpy2.rinterface_lib.callbacks.consolewrite_warnerror = suppress_r_output
+
+#  Импорт пакетов R 
+base = importr('base')
+utils = importr('utils')
+seasonal = importr('seasonal')
+stats = importr('stats')
+
+#  Устанавливаем кодировку в R 
+robjects.r('''
+    options(encoding = "UTF-8")
+    Sys.setenv(LANG = "en_US.UTF-8")
+''')
+
+# Проверка пакетов
+required_packages = ['seasonal', 'x13binary']
+for pkg in required_packages:
+    if not isinstalled(pkg):
+        print(f"Устанавливаю пакета {pkg}...")
+        utils.install_packages(pkg)
+    else:
+        print(f"Пакет {pkg} уже установлен.")
+
+#  Переменные для сезонной корректировки 
+x13_variables = {
+    'Expected_Inflation_12m': 'Ожидаемая инфляция (12м)',
+    'Ent_conf_ind_mining': 'Индекс уверенности (добыча)',
+    'Ent_conf_ind_manufactoring': 'Индекс уверенности (обработка)'
+}
+
+os.makedirs("x13_logs", exist_ok=True)    
+
+#  Основной цикл сезонной корректировки 
+
+for col, name in x13_variables.items():
+    try:
+        # Подготовка данных
+        series_data = df_RF[['Date', col]].copy().dropna()
+        
+        if len(series_data) < 24:
+            print(f"Недостаточно данных ({len(series_data)} наблюдений). Пропуск.")
+            continue
+
+        temp_df = series_data.set_index('Date').asfreq('MS').dropna()
+
+        start_year = int(temp_df.index[0].year)
+        start_month = int(temp_df.index[0].month)
+        print(f"Период: {start_year}-{start_month:02d}, наблюдений: {len(temp_df)}")
+
+        # Преобразуем данные в R формат
+        with localconverter(base_converter):
+            r_series = robjects.conversion.py2rpy(temp_df[col])
+        
+        globalenv['r_series'] = r_series
+        globalenv['start_year'] = start_year
+        globalenv['start_month'] = start_month
+
+        # === ЗАПУСК X13 В R ===
+        robjects.r(f'''
+            library(seasonal)
+            
+            # Создаем временной ряд
+            ts_data <- ts(r_series, start = c({start_year}, {start_month}), frequency = 12)
+            
+            # Удаляем NA
+            ts_data <- na.omit(ts_data)
+            
+            # Проверяем достаточность данных
+            if(length(ts_data) < 24) {{
+                stop("Недостаточно данных после удаления NA. Минимум 24 наблюдения.")
+            }}
+            
+            # Выполняем сезонную корректировку
+            res <- seas(
+                ts_data,
+                seats.noadmiss = "yes",
+                regression.aictest = NULL,
+                outlier = NULL,
+                transform.function = "auto"
+            )
+            
+            # Получаем компоненты
+            adj <- final(res)
+            trend_part <- trend(res)
+            seas_part <- ts_data - adj
+        ''')
+
+        # Извлекаем результаты
+        with localconverter(base_converter):
+            adj = robjects.conversion.rpy2py(robjects.r['adj'])
+            trend = robjects.conversion.rpy2py(robjects.r['trend_part'])
+            seas = robjects.conversion.rpy2py(robjects.r['seas_part'])
+
+        # ДОБАВЛЯЕМ РЕЗУЛЬТАТЫ В ДАТАСЕТ
+        for i, date in enumerate(temp_df.index):
+            if i < len(adj):
+                df_RF.loc[df_RF['Date'] == date, f'{col}_adj'] = adj[i]
+                df_RF.loc[df_RF['Date'] == date, f'{col}_trend'] = trend[i]
+                df_RF.loc[df_RF['Date'] == date, f'{col}_seasonal'] = seas[i]
+
+        # Расчет эффективности
+        mask = ~df_RF[f'{col}_adj'].isna()
+        if mask.any():
+            original_std = df_RF.loc[mask, col].std()
+            adj_std = df_RF.loc[mask, f'{col}_adj'].std()
+            reduction = 100 * (1 - adj_std / original_std) if original_std > 0 else 0
+            
+            print(f"Сезонная корректировка выполнена")
+            print(f"Снижение волатильности: {reduction:.1f}%")
+
+    except Exception as e:
+        print(f"Ошибка: {e}")
+
+# === ПРОВЕРКА ДОБАВЛЕННЫХ СТОЛБЦОВ ===
+print("\n" + "="*60)
+print("ПРОВЕРКА ДОБАВЛЕННЫХ СТОЛБЦОВ В DF_RF")
+print("="*60)
+
+added_columns = []
+for col in x13_variables.keys():
+    for suffix in ['_adj', '_trend', '_seasonal']:
+        new_col = f'{col}{suffix}'
+        if new_col in df_RF.columns:
+            added_columns.append(new_col)
+            non_na_count = df_RF[new_col].notna().sum()
+            print(f"✅ {new_col}: {non_na_count} не-NaN значений")
+
+print(f"\n Всего добавлено столбцов: {len(added_columns)}")
+
+# === СВОДКА РЕЗУЛЬТАТОВ ===
+print("\n" + "="*60)
+print("СВОДКА РЕЗУЛЬТАТОВ СЕЗОННОЙ КОРРЕКЦИИ")
+print("="*60)
+
+results_summary = []
+for col, name in x13_variables.items():
+    adj_col = f'{col}_adj'
+    if adj_col in df_RF.columns:
+        mask = ~df_RF[adj_col].isna()
+        if mask.any():
+            original_data = df_RF.loc[mask, col]
+            adj_data = df_RF.loc[mask, adj_col]
+            
+            original_std = original_data.std()
+            adj_std = adj_data.std()
+            reduction = 100 * (1 - adj_std / original_std) if original_std > 0 else 0
+            
+            results_summary.append({
+                'Переменная': name,
+                'Снижение волатильности': f"{reduction:.1f}%",
+                'До корректировки': f"{original_std:.4f}",
+                'После корректировки': f"{adj_std:.4f}"
+            })
+
+if results_summary:
+    summary_df = pd.DataFrame(results_summary)
+    print(summary_df.to_string(index=False))
+
+# === ВИЗУАЛИЗАЦИЯ РЕЗУЛЬТАТОВ ===
+print("\n" + "="*60)
+print("ВИЗУАЛИЗАЦИЯ РЕЗУЛЬТАТОВ")
+print("="*60)
+
+# Создаем графики для каждой скорректированной переменной
+for col, name in x13_variables.items():
+    adj_col = f'{col}_adj'
+    if adj_col in df_RF.columns:
+        # Фильтруем данные где есть скорректированные значения
+        plot_data = df_RF[['Date', col, adj_col]].dropna(subset=[adj_col])
+        
+        if len(plot_data) > 0:
+            plt.figure(figsize=(12, 6))
+            
+            plt.subplot(1, 2, 1)
+            plt.plot(plot_data['Date'], plot_data[col], 
+                    label='Исходный ряд', alpha=0.7, linewidth=1)
+            plt.plot(plot_data['Date'], plot_data[adj_col], 
+                    label='Сезонно скорректированный', linewidth=2)
+            plt.title(f'{name}\nСравнение рядов')
+            plt.legend()
+            plt.grid(alpha=0.3)
+            plt.xticks(rotation=45)
+            
+            plt.subplot(1, 2, 2)
+            seasonal_col = f'{col}_seasonal'
+            if seasonal_col in df_RF.columns:
+                seasonal_data = df_RF[['Date', seasonal_col]].dropna(subset=[seasonal_col])
+                plt.plot(seasonal_data['Date'], seasonal_data[seasonal_col], 
+                        color='red', linewidth=2)
+                plt.title('Сезонная компонента')
+                plt.axhline(y=0, color='black', linestyle='-', alpha=0.3)
+                plt.grid(alpha=0.3)
+                plt.xticks(rotation=45)
+            
+            plt.tight_layout()
+            plt.show()
+
+print("\n СЕЗОННАЯ КОРРЕКЦИЯ ЗАВЕРШЕНА!")
+print(" Все скорректированные ряды добавлены в df_RF")
+print(" Столбцы с суффиксами: _adj, _trend, _seasonal")
