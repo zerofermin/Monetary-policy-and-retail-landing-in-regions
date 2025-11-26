@@ -19,7 +19,13 @@ from statsmodels.stats.diagnostic import acorr_ljungbox
 from statsmodels.graphics.tsaplots import plot_acf, plot_pacf
 from statsmodels.tsa.vector_ar.vecm import coint_johansen
 from statsmodels.stats.diagnostic import het_white, het_breuschpagan
-
+from statsmodels.tsa.ardl import ARDL, ardl_select_order
+import sys
+import os
+os.environ['RPY2_CFFI_MODE'] = 'ABI'
+from scipy.stats import shapiro
+from statsmodels.stats.stattools import durbin_watson
+import itertools
 
 
 ###############################
@@ -38,6 +44,9 @@ df_RF = df_RF.sort_values('Date')
 df_reg['Date'] = pd.to_datetime(df_reg['Date'])
 df_reg = df_reg.sort_values(['Num_reg','Date'])
 
+df_reg.head()
+
+df_RF.head()
 
 ###############################
 # Подсчет ожидаемого уровня инфляции за 12 месяцев
@@ -83,12 +92,12 @@ def calculate_expected_inflation_12m(df, date_col='Date',
     
     return df_calc
 
+
 df_RF = calculate_expected_inflation_12m(
                 df_RF,
                 date_col='Date',
                 inflation_col='Inflation_Expectations')
 df_RF = df_RF.drop(['i_1', 'i_2'], axis=1)
-
 
 
 ###############################
@@ -115,9 +124,9 @@ desc = desc.rename(columns={
     'max': 'Макс.',
 })
 
-print("\n" + "="*80)
+print("\n" + "="*60)
 print("ОПИСАТЕЛЬНЫЕ СТАТИСТИКИ - ИСХОДНЫЕ ДАННЫЕ")
-print("="*80)
+print("="*60)
 print(desc[['Среднее', 'Медиана', 'ст. откл.', 'Мин.', 'Макс.']])
 
 
@@ -144,7 +153,6 @@ fig.set_xticklabels(fig.get_xticklabels(),
 plt.tight_layout()
 
 
-
 ###############################
     #VIF-анализ - начальные данные
 ###############################
@@ -167,11 +175,10 @@ vif_data["Variable"] = vif_variables
 vif_data["VIF"] = [variance_inflation_factor(X_vif.values, i+1) for i in range(len(vif_variables))]
 vif_data = vif_data.sort_values('VIF', ascending=False)
 
-print("\n" + "="*80)
+print("\n" + "="*60)
 print("РЕЗУЛЬТАТЫ VIF АНАЛИЗА - НАЧАЛЬНЫЕ ДАННЫЕ")
-print("="*80)
+print("="*60)
 print(vif_data.to_string(index=False))
-
 
 
 ##############################
@@ -240,6 +247,9 @@ def friedman_seasonality_test(df, date_col='Date', value_col='Variable',
             'n_months': len(pivot_data.columns),
             'error': str(e)
         }
+
+
+
 # Применяем тест
 
 friedman_results = []
@@ -265,12 +275,13 @@ friedman_summary = pd.DataFrame([
     for r in friedman_results
 ])
 
-print("\n" + "="*80)
+print("\n" + "="*60)
 print("РЕЗУЛЬТАТЫ ТЕСТОВ ФРИДМАНА")
 print("="*80)
 print(friedman_summary.to_string(index=False))
 
     
+
 ###############################
 # Сезонная корректировка через X-13 в R 
 ###############################
@@ -324,6 +335,7 @@ x13_variables = {
 }
 
 os.makedirs("x13_logs", exist_ok=True)
+
 
 
 #  Основной цикл сезонной корректировки 
@@ -495,7 +507,6 @@ print(" Все скорректированные ряды добавлены в
 print(" Столбцы с суффиксами: _adj, _trend, _seasonal")
 
 
-
 ##############################
 # Тест Фридмана для рядов, скорректированных на сезонность
 ##############################
@@ -560,8 +571,6 @@ def friedman_seasonality_test(df, date_col='Date', value_col='Variable',
             'error': str(e)
         }
 
-
-
 # Применяем тест
 
 friedman_results = []
@@ -587,12 +596,13 @@ friedman_summary = pd.DataFrame([
     for r in friedman_results
 ])
 
-print("\n" + "="*80)
+print("\n" + "="*60)
 print("РЕЗУЛЬТАТЫ ТЕСТОВ ФРИДМАНА")
-print("="*80)
+print("="*60)
 print(friedman_summary.to_string(index=False))
 
     
+
 print("\n" + "="*60)
 print("РАСЧЕТ ИНДЕКСА ПРЕДПРИНИМАТЕЛЬСКОЙ УВЕРЕННОСТИ")
 print("="*60)
@@ -659,7 +669,6 @@ df_RF['Inflation_gap'] =  df_RF['Expected_Inflation_12m'] - target_inflation
 
 fig, ax1 = plt.subplots(figsize=(15, 6))
 ax1.plot(df_RF['Date'], df_RF['Inflation_gap'], 
-         label='Инфляционный разрыв', 
          linewidth=2.5, color='darkred', linestyle='-', marker='o', markersize=3)
 ax1.set_title('Инфляционный разрыв', 
               fontsize=13, fontweight='bold', pad=15)
@@ -984,11 +993,10 @@ for var in df_test.columns:
     stationarity_results.append(result)
 
 stationarity_df = pd.DataFrame(stationarity_results)
-print("\n" + "="*80)
+print("\n" + "="*60)
 print("РЕЗУЛЬТАТЫ ТЕСТОВ НА СТАЦИОНАРНОСТЬ ДЛЯ НАЧАЛЬНЫХ ДАННЫХ")
-print("="*80)
+print("="*60)
 print(stationarity_df.to_string())
-
 
 
 
@@ -1047,9 +1055,8 @@ for var in diff_vars:
 stationarity_df_diff = pd.DataFrame(stationarity_results_diff)
 print(stationarity_df_diff.to_string())
 
+
 df_taylor = df_diff.copy()
-
-
 
 ###############################
 # Тест Льюинга-Бокса для I(1) переменных
@@ -1275,7 +1282,6 @@ else:
     print("\n✓ Нет проблемных рядов - все переменные имеют приемлемый уровень автокорреляции!")
 
 
-
 ###############################
 # ОПИСАТЕЛЬНЫЕ СТАТИСТИКИ - ОБРАБОТАННЫЕ ДАННЫЕ
 ###############################
@@ -1299,9 +1305,9 @@ desc = desc.rename(columns={
     'max': 'Макс.',
 })
 
-print("\n" + "="*80)
+print("\n" + "="*60)
 print("ОПИСАТЕЛЬНЫЕ СТАТИСТИКИ - ОБРАБОТАННЫЕ ДАННЫЕ")
-print("="*80)
+print("="*60)
 print(desc[['Среднее', 'Медиана', 'ст. откл.', 'Мин.', 'Макс.']])
 
 
@@ -1328,7 +1334,6 @@ fig.set_xticklabels(fig.get_xticklabels(),
 plt.tight_layout()
 
 
-
 ###############################
     #VIF-анализ - обработанные данные
 ###############################
@@ -1350,9 +1355,9 @@ vif_data["Variable"] = vif_variables
 vif_data["VIF"] = [variance_inflation_factor(X_vif.values, i+1) for i in range(len(vif_variables))]
 vif_data = vif_data.sort_values('VIF', ascending=False)
 
-print("\n" + "="*80)
+print("\n" + "="*60)
 print("РЕЗУЛЬТАТЫ VIF АНАЛИЗА - ОБРАБОТАННЫЕ ДАННЫЕ")
-print("="*80)
+print("="*60)
 print(vif_data.to_string(index=False))
 
 
@@ -1370,7 +1375,7 @@ print(f"\nДанные: {len(df_johansen)} наблюдений")
 print(f"Период: {df_RF['Date'].min()} - {df_RF['Date'].max()}")
 
 # === ТЕСТ ЙОХАНСЕНА ===
-print("\n" + "="*70)
+print("\n" + "="*60)
 print("Тестирование на коинтеграцию используемых временных рядов")
 print("Результаты проведения теста Йохансена на поиск коинтегрирующего соотношения")
 print("Статистика Trace Value")
@@ -1380,7 +1385,7 @@ johansen = coint_johansen(df_johansen, det_order=0, k_ar_diff=1)
 
 # Таблица результатов Trace test
 print(f"\n{'r':<6} {'Test':<10} {'10%':<10} {'5%':<10} {'1%':<10} {'Result':<15}")
-print("-"*65)
+print("-"*60)
 
 rank = 0
 k = len(df_johansen.columns)
@@ -1425,9 +1430,9 @@ for r_display in range(k):
 print(f"\n→ Ранг коинтеграции: r = {rank}")
 
 # === ЛИНЕЙНАЯ КОМБИНАЦИЯ ИССЛЕДУЕМЫХ РЯДОВ ===
-print("\n" + "="*70)
+print("\n" + "="*60)
 print("Линейная комбинация исследуемых рядов")
-print("="*70)
+print("="*60)
 
 if rank > 0:
     # Нормализуем первый собственный вектор (коинтеграционный вектор)
@@ -1453,12 +1458,16 @@ else:
 
 
 ###############################
-    #Подготовка финального датасета (добавляем дамми)
+    #Подготовка финального датасета (добавляем дамми, лаги и прозведения)
 ###############################
 
 df_taylor['Covid_dum'] = df_RF['Covid_dum']
 df_taylor['Sank_dum'] = df_RF['Sank_dum']
-df_taylor['D_log_ROISFIX_lag'] = df_taylor['D_log_ROISFIX'].shift(1)
+df_taylor['L1_D_Inflation_gap'] = df_taylor['D_Inflation_gap'].shift(1)
+df_taylor['L1_D_Ent_conf_ind_total'] = df_taylor['D_Ent_conf_ind_total'].shift(1)
+df_taylor['L1_D_log_Nominal_Percent_Rate'] = df_taylor['D_log_Nominal_Percent_Rate'].shift(1)  
+df_taylor['L1_D_log_ROISFIX'] = df_taylor['D_log_ROISFIX'].shift(1)
+
 df_taylor = df_taylor.dropna()
 df_taylor.head()
 
@@ -1466,10 +1475,6 @@ df_taylor.head()
 ###############################
 # Тест White и Breusch-Pagan на гетероскедастичность
 ###############################
-
-from statsmodels.stats.diagnostic import het_white, het_breuschpagan
-import statsmodels.api as sm
-
 print("\n" + "="*60)
 print("ТЕСТЫ НА ГЕТЕРОСКЕДАСТИЧНОСТЬ: WHITE И BREUSCH-PAGAN")
 print("="*60)
@@ -1504,9 +1509,9 @@ print(f"F-статистика: {bp_f_stat:.4f}")
 print(f"P-значение (F): {bp_f_pvalue:.6f}")
 
 if bp_pvalue < 0.05:
-    print("\n✗ ОТКЛОНЯЕМ H0: ОБНАРУЖЕНА ГЕТЕРОСКЕДАСТИЧНОСТЬ (p < 0.05)")
+    print("\n ОТКЛОНЯЕМ H0: ОБНАРУЖЕНА ГЕТЕРОСКЕДАСТИЧНОСТЬ (p < 0.05)")
 else:
-    print("\n✓ ПРИНИМАЕМ H0: НЕТ ЗНАЧИМОЙ ГЕТЕРОСКЕДАСТИЧНОСТИ (p > 0.05)")
+    print("\n ПРИНИМАЕМ H0: НЕТ ЗНАЧИМОЙ ГЕТЕРОСКЕДАСТИЧНОСТИ (p > 0.05)")
 
 # === ТЕСТ WHITE ===
 print("\n" + "-"*80)
@@ -1515,7 +1520,6 @@ print("-"*80)
 print("H0: Гомоскедастичность (константная дисперсия)")
 print("H1: Гетероскедастичность (переменная дисперсия)\n")
 
-# ИСПРАВЛЕНО: het_white() возвращает 4 значения!
 white_stat, white_pvalue, white_df, white_fitted = het_white(residuals, X)
 
 print(f"LM-статистика White: {white_stat:.4f}")
@@ -1523,9 +1527,9 @@ print(f"P-значение: {white_pvalue:.6f}")
 print(f"Степени свободы: {white_df}")
 
 if white_pvalue < 0.05:
-    print("\n✗ ОТКЛОНЯЕМ H0: ОБНАРУЖЕНА ГЕТЕРОСКЕДАСТИЧНОСТЬ (p < 0.05)")
+    print("\n ОТКЛОНЯЕМ H0: ОБНАРУЖЕНА ГЕТЕРОСКЕДАСТИЧНОСТЬ (p < 0.05)")
 else:
-    print("\n✓ ПРИНИМАЕМ H0: НЕТ ЗНАЧИМОЙ ГЕТЕРОСКЕДАСТИЧНОСТИ (p > 0.05)")
+    print("\n ПРИНИМАЕМ H0: НЕТ ЗНАЧИМОЙ ГЕТЕРОСКЕДАСТИЧНОСТИ (p > 0.05)")
 
 # === СВОДНАЯ ТАБЛИЦА ===
 print("\n" + "="*60)
@@ -1537,15 +1541,822 @@ summary_heteroscedasticity = pd.DataFrame({
     'Статистика': [f"{bp_stat:.4f}", f"{bp_f_stat:.4f}", f"{white_stat:.4f}"],
     'P-значение': [f"{bp_pvalue:.6f}", f"{bp_f_pvalue:.6f}", f"{white_pvalue:.6f}"],
     'Вывод': [
-        '✗ Гетероскедастичность' if bp_pvalue < 0.05 else '✓ Гомоскедастичность',
-        '✗ Гетероскедастичность' if bp_f_pvalue < 0.05 else '✓ Гомоскедастичность',
-        '✗ Гетероскедастичность' if white_pvalue < 0.05 else '✓ Гомоскедастичность'
+        ' Гетероскедастичность' if bp_pvalue < 0.05 else ' Гомоскедастичность',
+        ' Гетероскедастичность' if bp_f_pvalue < 0.05 else ' Гомоскедастичность',
+        ' Гетероскедастичность' if white_pvalue < 0.05 else ' Гомоскедастичность'
     ]
 })
 
 print(summary_heteroscedasticity.to_string(index=False))
 
 
+###############################
+# ИНТЕРПРЕТАЦИЯ КЛЮЧЕВЫХ КОЭФФИЦИЕНТОВ
+###############################
+
+def extract_ardl_coefficients(result, y_name, print_results=True):
+    """
+    Извлекает ключевые коэффициенты из ARDL модели:
+    - α (alpha): реакция на инфляцию
+    - μ (mu): реакция на уверенность
+    - γ (gamma): коэффициент инерции (лаг зависимой переменной)
+    """
+    params = result.params
+    pvalues = result.pvalues
+    
+    coeffs = {
+        'alpha': None,
+        'mu': None,
+        'gamma': None,
+        'alpha_pval': None,
+        'mu_pval': None,
+        'gamma_pval': None
+    }
+    
+    # Извлечение альфа (инфляция)
+    if 'D_Inflation_gap' in params.index:
+        coeffs['alpha'] = params['D_Inflation_gap']
+        coeffs['alpha_pval'] = pvalues['D_Inflation_gap']
+    
+    # Извлечение мю (уверенность)
+    if 'D_Ent_conf_ind_total' in params.index:
+        coeffs['mu'] = params['D_Ent_conf_ind_total']
+        coeffs['mu_pval'] = pvalues['D_Ent_conf_ind_total']
+    
+    # Извлечение гамма (лаг зависимой переменной)
+    # Ищем по паттерну: y_lag.1, L.y, D_log_ROISFIX.L1, etc.
+    lag_patterns = [
+    f'{y_name}.L1',
+    f'L.{y_name}',
+    f'{y_name}_lag',
+    f'{y_name}_lag.1',
+    f'{y_name}_L1',
+    f'L1_{y_name}',
+    ]
+    
+    for pattern in lag_patterns:
+        if pattern in params.index:
+            coeffs['gamma'] = params[pattern]
+            coeffs['gamma_pval'] = pvalues[pattern]
+            coeffs['gamma_name'] = pattern
+            break
+    
+    # Вывод результатов
+    if print_results:
+        print("\n" + "="*60)
+        print("ИНТЕРПРЕТАЦИЯ КЛЮЧЕВЫХ КОЭФФИЦИЕНТОВ ARDL")
+        print("="*60)
+        
+        # α - реакция на инфляцию
+        if coeffs['alpha'] is not None:
+            alpha_sr = coeffs['alpha']
+            alpha_pval = coeffs['alpha_pval']
+            sig_alpha = "***" if alpha_pval < 0.01 else ("**" if alpha_pval < 0.05 else "*" if alpha_pval < 0.1 else "")
+            print(f"\nα (АЛЬФА) - краткосрочная реакция на инфляцию:")
+            print(f"  Значение: {alpha_sr:.6f} {sig_alpha}")
+            print(f"  P-value: {alpha_pval:.6f}")
+            print(f"  Интерпретация: На 1% рост инфляции, ставка {'растет' if alpha_sr > 0 else 'падает'} на {abs(alpha_sr):.4f}%")
+            if alpha_pval < 0.05:
+                print(f"  Статистическая значимость: Значима (p < 0.05)")
+            else:
+                print(f"  Статистическая значимость: Незначима (p > 0.05)")
+        else:
+            print("\n α (альфа) не найдена в модели")
+        
+        # μ - реакция на уверенность
+        if coeffs['mu'] is not None:
+            mu_sr = coeffs['mu']
+            mu_pval = coeffs['mu_pval']
+            sig_mu = "***" if mu_pval < 0.01 else ("**" if mu_pval < 0.05 else "*" if mu_pval < 0.1 else "")
+            print(f"\nμ (МЮ) - краткосрочная реакция на разрыв выпуска:")
+            print(f"  Значение: {mu_sr:.6f} {sig_mu}")
+            print(f"  P-value: {mu_pval:.6f}")
+            print(f"  Интерпретация: На 1 пункт рост уверенности (прокси разрыва выпуска), ставка {'растет' if mu_sr > 0 else 'падает'} на {abs(mu_sr):.4f}%")
+            if mu_pval < 0.05:
+                print(f"  Статистическая значимость: Значима (p < 0.05)")
+            else:
+                print(f"  Статистическая значимость: Незначима (p > 0.05)")
+        else:
+            print("\n μ (мю) не найдена в модели")
+        
+        # γ - инерция (лагированная ставка)
+        if coeffs['gamma'] is not None:
+            gamma = coeffs['gamma']
+            gamma_pval = coeffs['gamma_pval']
+            speed_adj = 1 - gamma
+            sig_gamma = "***" if gamma_pval < 0.01 else ("**" if gamma_pval < 0.05 else "*" if gamma_pval < 0.1 else "")
+            
+            print(f"\nγ (ГАММА) - коэффициент инерции (лаг зависимой переменной):")
+            print(f"  Переменная: {coeffs.get('gamma_name', 'неизвестно')}")
+            print(f"  Значение: {gamma:.6f} {sig_gamma}")
+            print(f"  P-value: {gamma_pval:.6f}")
+            
+            print(f"\n  Интерпретация:")
+            print(f"    - Инерция системы: {gamma:.4f} (доля предыдущего периода)")
+            print(f"    - Скорость адаптации к равновесию: {speed_adj:.4f}")
+            print(f"    - На каждый период корректируется: {speed_adj*100:.2f}% отклонения")
+            
+            if 0 < gamma < 1:
+                print(f"    - Модель СТАБИЛЬНА (динамическое равновесие)")
+            elif gamma >= 1:
+                print(f"    -  Модель НЕСТАБИЛЬНА (взрывной процесс)")
+            elif gamma < 0:
+                print(f"    - ОТРИЦАТЕЛЬНАЯ инерция (колебания вокруг равновесия)")
+        else:
+            print("\n γ (гамма) не найдена в модели")
+    
+    return coeffs
+
+
+###############################
+# МОДЕЛЬ 1: БАЗОВАЯ (без dummy)
+###############################
+
+print("\n" + "="*60)
+print("МОДЕЛЬ 1: БАЗОВАЯ ARDL (1, 0, 0, 0) БЕЗ DUMMY")
+print("="*60)
+
+formula1 = """D_log_ROISFIX ~ 
+            L1_D_log_ROISFIX +
+            D_Inflation_gap + 
+            D_log_Nominal_Percent_Rate + 
+            D_Ent_conf_ind_total
+            """
+
+model1 = ols(formula1, data=df_taylor).fit(cov_type='HAC', cov_kwds={'maxlags': 4})
+print(model1.summary())
+coeffs = extract_ardl_coefficients(model1, y_name='D_log_ROISFIX', print_results=True)
+
+###############################
+# МОДЕЛЬ 2: с дамми для 2022 и для ковида
+###############################
+
+print("\n" + "="*60)
+print("МОДЕЛЬ 2: ARDL (1, 0, 0, 0) С DUMMY")
+print("="*60)
+
+formula2 = """D_log_ROISFIX ~ 
+            L1_D_log_ROISFIX +
+            D_Inflation_gap + 
+            D_log_Nominal_Percent_Rate + 
+            D_Ent_conf_ind_total +
+            Sank_dum +
+            Covid_dum
+            """
+
+model2 = ols(formula2, data=df_taylor).fit(cov_type='HAC', cov_kwds={'maxlags': 4})
+print(model2.summary())
+coeffs = extract_ardl_coefficients(model2, y_name='D_log_ROISFIX', print_results=True)
+
+
+###############################
+# МОДЕЛЬ 3: с лагаом inf_gap разрыва без дамми 
+###############################
+
+print("\n" + "="*60)
+print("МОДЕЛЬ 3: ARDL (1, 1, 0, 0) БЕЗ DUMMY ")
+print("="*60)
+
+formula3 = """D_log_ROISFIX ~ 
+            L1_D_log_ROISFIX +
+            D_Inflation_gap + 
+            L1_D_Inflation_gap +
+            D_log_Nominal_Percent_Rate +
+            D_Ent_conf_ind_total
+            """
+
+model3 = ols(formula3, data=df_taylor).fit(cov_type='HAC', cov_kwds={'maxlags': 4})
+print(model3.summary())
+coeffs = extract_ardl_coefficients(model3, y_name='D_log_ROISFIX', print_results=True)
+
+###############################
+# МОДЕЛЬ 4: с лагом inf_gap разрыва с дамми 
+###############################
+
+print("\n" + "="*60)
+print("МОДЕЛЬ 4: ARDL (1, 1, 0, 0) С DUMMY ")
+print("="*60)
+
+
+
+formula4 = """D_log_ROISFIX ~ 
+            L1_D_log_ROISFIX +
+            D_Inflation_gap + 
+            L1_D_Inflation_gap +
+            D_log_Nominal_Percent_Rate +
+            D_Ent_conf_ind_total +
+            Sank_dum +
+            Covid_dum
+            """
+
+model4 = ols(formula4, data=df_taylor).fit(cov_type='HAC', cov_kwds={'maxlags': 4})
+print(model4.summary())
+coeffs = extract_ardl_coefficients(model4, y_name='D_log_ROISFIX', print_results=True)
+
+
+###############################
+# МОДЕЛЬ 5: ARDL с лагом r* без дамми
+###############################
+
+print("\n" + "="*60)
+print("МОДЕЛЬ 5: ARDL (1, 0, 1, 0) БЕЗ DUMMY")
+print("="*60)
+
+formula5 = """D_log_ROISFIX ~ 
+            L1_D_log_ROISFIX +
+            D_Inflation_gap + 
+            D_log_Nominal_Percent_Rate +
+            L1_D_log_Nominal_Percent_Rate +
+            D_Ent_conf_ind_total 
+            """
+
+model5 = ols(formula5, data=df_taylor).fit(cov_type='HAC', cov_kwds={'maxlags': 4})
+print(model5.summary())
+coeffs = extract_ardl_coefficients(model5, y_name='D_log_ROISFIX', print_results=True)
+
+
+###############################
+# МОДЕЛЬ 6: ARDL с лагом r* С дамми
+###############################
+
+print("\n" + "="*60)
+print("МОДЕЛЬ 6: ARDL (1, 0, 1, 0) С DUMMY")
+print("="*60)
+
+formula6 = """D_log_ROISFIX ~ 
+            L1_D_log_ROISFIX +
+            D_Inflation_gap + 
+            D_log_Nominal_Percent_Rate +
+            L1_D_log_Nominal_Percent_Rate +
+            D_Ent_conf_ind_total +
+            Sank_dum +
+            Covid_dum
+            """
+
+model6 = ols(formula6, data=df_taylor).fit(cov_type='HAC', cov_kwds={'maxlags': 4})
+print(model6.summary())
+coeffs = extract_ardl_coefficients(model6, y_name='D_log_ROISFIX', print_results=True)
+
+
+###############################
+# МОДЕЛЬ 7: ARDL с лагом y_gap БЕЗ дамми
+###############################
+
+print("\n" + "="*60)
+print("МОДЕЛЬ 7: ARDL (1, 0, 0, 1) БЕЗ DUMMY")
+print("="*60)
+
+formula7 = """D_log_ROISFIX ~ 
+            L1_D_log_ROISFIX +
+            D_Inflation_gap + 
+            D_log_Nominal_Percent_Rate +
+            D_Ent_conf_ind_total +
+            L1_D_Ent_conf_ind_total
+            """
+
+model7 = ols(formula7, data=df_taylor).fit(cov_type='HAC', cov_kwds={'maxlags': 4})
+print(model6.summary())
+coeffs = extract_ardl_coefficients(model6, y_name='D_log_ROISFIX', print_results=True)
+
+
+###############################
+# МОДЕЛЬ 8: ARDL с лагом y_gap с дамми
+###############################
+
+print("\n" + "="*60)
+print("МОДЕЛЬ 8: ARDL (1, 0, 0, 1) С DUMMY")
+print("="*60)
+
+formula8 = """D_log_ROISFIX ~ 
+            L1_D_log_ROISFIX +
+            D_Inflation_gap + 
+            D_log_Nominal_Percent_Rate +
+            D_Ent_conf_ind_total +
+            L1_D_Ent_conf_ind_total +
+            Covid_dum +
+            Sank_dum
+            """
+
+model8 = ols(formula8, data=df_taylor).fit(cov_type='HAC', cov_kwds={'maxlags': 4})
+print(model8.summary())
+coeffs = extract_ardl_coefficients(model8, y_name='D_log_ROISFIX', print_results=True)
+
+
+###############################
+# МОДЕЛЬ 9: ARDL с лагом inf_gap и r* без дамми
+###############################
+
+print("\n" + "="*60)
+print("МОДЕЛЬ 9: ARDL (1, 1, 1, 0) БЕЗ DUMMY")
+print("="*60)
+
+formula9 = """D_log_ROISFIX ~ 
+            L1_D_log_ROISFIX +
+            D_Inflation_gap + 
+            L1_D_Inflation_gap+
+            D_log_Nominal_Percent_Rate +
+            L1_D_log_Nominal_Percent_Rate+
+            D_Ent_conf_ind_total
+            """
+
+model9 = ols(formula9, data=df_taylor).fit(cov_type='HAC', cov_kwds={'maxlags': 4})
+print(model9.summary())
+coeffs = extract_ardl_coefficients(model9, y_name='D_log_ROISFIX', print_results=True)
+
+
+###############################
+# МОДЕЛЬ 10: ARDL с лагом inf_gap и r* с дамми
+###############################
+
+print("\n" + "="*60)
+print("МОДЕЛЬ 10: ARDL (1, 1, 1, 0) С DUMMY")
+print("="*60)
+
+formula10 = """D_log_ROISFIX ~ 
+            L1_D_log_ROISFIX +
+            D_Inflation_gap + 
+            L1_D_Inflation_gap+
+            D_log_Nominal_Percent_Rate +
+            L1_D_log_Nominal_Percent_Rate+
+            D_Ent_conf_ind_total +
+            Covid_dum +
+            Sank_dum
+            """
+
+model10 = ols(formula10, data=df_taylor).fit(cov_type='HAC', cov_kwds={'maxlags': 4})
+print(model10.summary())
+coeffs = extract_ardl_coefficients(model10, y_name='D_log_ROISFIX', print_results=True)
+
+
+###############################
+# МОДЕЛЬ 11: ARDL с лагом inf_gap и y_gap без дамми
+###############################
+
+print("\n" + "="*60)
+print("МОДЕЛЬ 11: ARDL (1, 1, 0, 1) БЕЗ DUMMY")
+print("="*60)
+
+formula11 = """D_log_ROISFIX ~ 
+            L1_D_log_ROISFIX +
+            D_Inflation_gap + 
+            L1_D_Inflation_gap +
+            D_log_Nominal_Percent_Rate +
+            D_Ent_conf_ind_total +
+            L1_D_Ent_conf_ind_total
+            """
+
+model11 = ols(formula11, data=df_taylor).fit(cov_type='HAC', cov_kwds={'maxlags': 4})
+print(model11.summary())
+coeffs = extract_ardl_coefficients(model11, y_name='D_log_ROISFIX', print_results=True)
+
+###############################
+# МОДЕЛЬ 12: ARDL с лагом inf_gap и y_gap с дамми
+###############################
+
+print("\n" + "="*60)
+print("МОДЕЛЬ 12: ARDL (1, 1, 0, 1) С DUMMY")
+print("="*60)
+
+formula12 = """D_log_ROISFIX ~ 
+            L1_D_log_ROISFIX +
+            D_Inflation_gap + 
+            L1_D_Inflation_gap +
+            D_log_Nominal_Percent_Rate +
+            D_Ent_conf_ind_total +
+            L1_D_Ent_conf_ind_total +
+            Covid_dum +
+            Sank_dum
+            """
+
+model12 = ols(formula12, data=df_taylor).fit(cov_type='HAC', cov_kwds={'maxlags': 4})
+print(model12.summary())
+coeffs = extract_ardl_coefficients(model12, y_name='D_log_ROISFIX', print_results=True)
+
+
+###############################
+# МОДЕЛЬ 13: ARDL с лагом r* и y_gap без дамми
+###############################
+
+print("\n" + "="*60)
+print("МОДЕЛЬ 13: ARDL (1, 0, 1, 1) БЕЗ DUMMY")
+print("="*60)
+
+formula13 = """D_log_ROISFIX ~ 
+            L1_D_log_ROISFIX +
+            D_Inflation_gap + 
+            D_log_Nominal_Percent_Rate +
+            L1_D_log_Nominal_Percent_Rate +
+            D_Ent_conf_ind_total +
+            L1_D_Ent_conf_ind_total
+            """
+
+model13 = ols(formula13, data=df_taylor).fit(cov_type='HAC', cov_kwds={'maxlags': 4})
+print(model13.summary())
+coeffs = extract_ardl_coefficients(model11, y_name='D_log_ROISFIX', print_results=True)
+
+
+###############################
+# МОДЕЛЬ 14: ARDL с лагом inf_gap и y_gap с дамми
+###############################
+
+print("\n" + "="*60)
+print("МОДЕЛЬ 14: ARDL (1, 0, 1, 1) С DUMMY")
+print("="*60)
+
+formula14 = """D_log_ROISFIX ~ 
+            L1_D_log_ROISFIX +
+            D_Inflation_gap + 
+            D_log_Nominal_Percent_Rate +
+            L1_D_log_Nominal_Percent_Rate +
+            D_Ent_conf_ind_total +
+            L1_D_Ent_conf_ind_total +
+            Covid_dum +
+            Sank_dum
+            """
+
+model14 = ols(formula14, data=df_taylor).fit(cov_type='HAC', cov_kwds={'maxlags': 4})
+print(model14.summary())
+coeffs = extract_ardl_coefficients(model14, y_name='D_log_ROISFIX', print_results=True)
+
+
+###############################
+# МОДЕЛЬ 15: ARDL с лагами всех переменных без дамми
+###############################
+
+print("\n" + "="*60)
+print("МОДЕЛЬ 15: ARDL (1, 1, 1, 1) БЕЗ DUMMY")
+print("="*60)
+
+formula15 = """D_log_ROISFIX ~ 
+            L1_D_log_ROISFIX +
+            D_Inflation_gap + 
+            L1_D_Inflation_gap + 
+            D_log_Nominal_Percent_Rate +
+            L1_D_log_Nominal_Percent_Rate +
+            D_Ent_conf_ind_total +
+            L1_D_Ent_conf_ind_total 
+            """
+
+model15 = ols(formula15, data=df_taylor).fit(cov_type='HAC', cov_kwds={'maxlags': 4})
+print(model15.summary())
+coeffs = extract_ardl_coefficients(model15, y_name='D_log_ROISFIX', print_results=True)
+
+
+###############################
+# МОДЕЛЬ 16: ARDL ARDL с лагами всех переменных и дамми
+###############################
+
+print("\n" + "="*60)
+print("МОДЕЛЬ 16: ARDL (1, 1, 1, 1) С DUMMY")
+print("="*60)
+
+formula16 = """D_log_ROISFIX ~ 
+            L1_D_log_ROISFIX +
+            D_Inflation_gap + 
+            L1_D_Inflation_gap + 
+            D_log_Nominal_Percent_Rate +
+            L1_D_log_Nominal_Percent_Rate +
+            D_Ent_conf_ind_total +
+            L1_D_Ent_conf_ind_total +
+            Covid_dum +
+            Sank_dum
+            """
+
+model16 = ols(formula16, data=df_taylor).fit(cov_type='HAC', cov_kwds={'maxlags': 4})
+print(model16.summary())
+coeffs = extract_ardl_coefficients(model16, y_name='D_log_ROISFIX', print_results=True)
+
+
+###############################
+# СРАВНИТЕЛЬНАЯ ТАБЛИЦА МОДЕЛЕЙ
+###############################
+
+
+print("\n" + "="*60)
+print("СРАВНЕНИЕ МОДЕЛЕЙ")
+print("="*60)
+
+models = [model1, model2, model3, model4,
+          model5, model6, model7, model8,
+          model9, model10, model11, model12,
+          model13, model14, model15, model16]
+model_names = ['Model 1/(1,0,0,0)', 'Model 2/(1,0,0,0)D', 
+               'Model 3/(1,1,0,0)', 'Model 4/(1,1,0,0)D', 
+               'Model 5/(1,0,1,0)', 'Model 6/(1,0,1,0)D',
+               'Model 7/(1,0,0,1)', 'Model 8/(1,0,0,1)D',
+               'Model 9/(1,1,1,0)', 'Model 10/(1,1,1,0)D', 
+               'Model 11/(1,1,0,1)', 'Model 12/(1,1,0,1)D', 
+               'Model 13/(1,0,1,1)', 'Model 14/(1,0,1,1)D',
+               'Model 15/(1,1,1,1)', 'Model 16/(1,1,1,1)D'
+              ]
+
+comparison_data = {
+    'Model': model_names,
+    'R²': [m.rsquared for m in models],
+    'Adj-R²': [m.rsquared_adj for m in models],
+    'AIC': [m.aic for m in models],
+    'BIC': [m.bic for m in models],
+    'F-stat': [m.fvalue for m in models],
+    'N': [len(m.resid) for m in models]
+}
+
+comparison_df = pd.DataFrame(comparison_data)
+print(comparison_df.to_string(index=False))
+
+
+###############################
+# ВЫБОР ЛУЧШЕЙ МОДЕЛИ
+###############################
+
+print("\n" + "="*60)
+print("ВЫБОР ЛУЧШЕЙ МОДЕЛИ (по BIC)")
+print("="*60)
+
+bic_values = [m.bic for m in models]
+best_idx = np.argmin(bic_values)
+best_model = models[best_idx]
+best_name = model_names[best_idx]
+
+print(f"\n Оптимальная модель: {best_name}")
+print(f"  BIC = {best_model.bic:.4f}")
+
+###############################
+# КЛЮЧЕВЫЕ КОЭФФИЦИЕНТЫ ЛУЧШЕЙ МОДЕЛИ
+###############################
+
+print("\n" + "="*60)
+print("КОЭФФИЦИЕНТЫ ЛУЧШЕЙ МОДЕЛИ")
+print("="*60)
+
+params = best_model.params
+pvalues = best_model.pvalues
+tvalues = best_model.tvalues
+
+print(f"\nПараметры модели {best_name}:\n")
+
+for param_name in params.index:
+    value = params[param_name]
+    pval = pvalues[param_name]
+    tstat = tvalues[param_name]
+    
+    # Значимость
+    if pval < 0.01:
+        sig = "***"
+    elif pval < 0.05:
+        sig = "**"
+    elif pval < 0.1:
+        sig = "*"
+    else:
+        sig = ""
+    
+    print(f"{param_name:40s}: {value:10.6f} {sig:3s}  (t={tstat:7.3f}, p={pval:.4f})")
+coeffs = extract_ardl_coefficients(model5, y_name='D_log_ROISFIX', print_results=True)
+
+###############################
+# Добавляем взаимодействие дамми и разрыва по выпуску
+###############################
+df_taylor['D_Ent_conf_ind_total_Sank'] = df_taylor['D_Ent_conf_ind_total'] * df_taylor['Sank_dum']
+
+
+###############################
+# МОДЕЛЬ 17: ARDL с лагом inf_gap и r* без дамми со взаимодействием dummy_sank и y_gap
+###############################
+
+print("\n" + "="*60)
+print("МОДЕЛЬ 17: ARDL (1, 1, 1, 0) БЕЗ DUMMY С ВЗАИМОДЕЙСТВИЕМ DUMMY_SANK И Y_GAP")
+print("="*60)
+
+formula17 = """D_log_ROISFIX ~ 
+            L1_D_log_ROISFIX +
+            D_Inflation_gap + 
+            L1_D_Inflation_gap +
+            D_log_Nominal_Percent_Rate +
+            L1_D_log_Nominal_Percent_Rate +
+            D_Ent_conf_ind_total +
+            D_Ent_conf_ind_total_Sank
+            """
+
+model17 = ols(formula17, data=df_taylor).fit(cov_type='HAC', cov_kwds={'maxlags': 4})
+print(model17.summary())
+coeffs = extract_ardl_coefficients(model17, y_name='D_log_ROISFIX', print_results=True)
+
+
+###############################
+# СРАВНИТЕЛЬНАЯ ТАБЛИЦА МОДЕЛЕЙ
+###############################
+
+
+print("\n" + "="*60)
+print("СРАВНЕНИЕ МОДЕЛЕЙ")
+print("="*60)
+
+models = [model9, model17]
+model_names = ['Model 9/(1,1,1,0)', 'Model 17/(1,1,1,0)Interaction']
+
+comparison_data = {
+    'Model': model_names,
+    'R²': [m.rsquared for m in models],
+    'Adj-R²': [m.rsquared_adj for m in models],
+    'AIC': [m.aic for m in models],
+    'BIC': [m.bic for m in models],
+    'F-stat': [m.fvalue for m in models],
+    'N': [len(m.resid) for m in models]
+}
+
+comparison_df = pd.DataFrame(comparison_data)
+print(comparison_df.to_string(index=False))
+
+
+###############################
+# ВЫБОР ЛУЧШЕЙ МОДЕЛИ
+###############################
+
+print("\n" + "="*60)
+print("ВЫБОР ЛУЧШЕЙ МОДЕЛИ (по BIC)")
+print("="*60)
+
+bic_values = [m.bic for m in models]
+best_idx = np.argmin(bic_values)
+best_model = models[best_idx]
+best_name = model_names[best_idx]
+
+print(f"\n Оптимальная модель: {best_name}")
+print(f"  BIC = {best_model.bic:.4f}")
+
+###############################
+# КЛЮЧЕВЫЕ КОЭФФИЦИЕНТЫ ЛУЧШЕЙ МОДЕЛИ
+###############################
+
+print("\n" + "="*60)
+print("КОЭФФИЦИЕНТЫ ЛУЧШЕЙ МОДЕЛИ")
+print("="*60)
+
+params = best_model.params
+pvalues = best_model.pvalues
+tvalues = best_model.tvalues
+
+print(f"\nПараметры модели {best_name}:\n")
+
+for param_name in params.index:
+    value = params[param_name]
+    pval = pvalues[param_name]
+    tstat = tvalues[param_name]
+    
+    # Значимость
+    if pval < 0.01:
+        sig = "***"
+    elif pval < 0.05:
+        sig = "**"
+    elif pval < 0.1:
+        sig = "*"
+    else:
+        sig = ""
+    
+    print(f"{param_name:40s}: {value:10.6f} {sig:3s}  (t={tstat:7.3f}, p={pval:.4f})")
+coeffs = extract_ardl_coefficients(model5, y_name='D_log_ROISFIX', print_results=True)
+
+###############################
+# ВЫДЕЛЕНИЕ ШОКОВ МОНЕТАРНОЙ ПОЛИТИКИ
+###############################
+df_taylor['Taylor_Predicted'] = model5.fittedvalues
+df_taylor['Mon_Shock'] = df_taylor['D_log_Nominal_Percent_Rate'] - df_taylor['Taylor_Predicted']
+
+print("\n" + "="*60)
+print("Визуализация шоков монетарной политики")
+print("="*60)
+
+fig, ax1 = plt.subplots(figsize=(15, 6))
+ax1.plot(df_taylor['Date'], df_taylor['Mon_Shock'], 
+         linewidth=2.5, color='steelblue', linestyle='-', marker='o', markersize=3)
+ax1.set_title('Шоки монетарной политики', 
+              fontsize=13, fontweight='bold', pad=15)
+ax1.legend(loc='best', fontsize=11, framealpha=0.95)
+ax1.grid(alpha=0.3, linestyle='--')
+ax1.set_ylabel('%', fontsize=11)
+ax1.set_xlabel('Дата', fontsize=11)
+ax1.tick_params(axis='both', labelsize=10)
+plt.tight_layout()
+plt.show()
+
+###############################
+# ОПИСАТЕЛЬНЫЕ СТАТИСТИКИ
+###############################
+# ИСПРАВЛЕНИЕ: descriptive_df это Series, работаем с ней как с Series
+shock_series = df_taylor['Mon_Shock'].dropna()
+
+desc_stats = {
+    'Среднее': shock_series.mean(),
+    'Медиана': shock_series.median(),
+    'Ст. откл.': shock_series.std(),
+    'Мин.': shock_series.min(),
+    'Макс.': shock_series.max()
+}
+
+print("\n" + "="*60)
+print("ОПИСАТЕЛЬНЫЕ СТАТИСТИКИ - ШОКИ МОНЕТАРНОЙ ПОЛИТИКИ")
+print("="*60)
+
+desc_df = pd.DataFrame(desc_stats, index=['Mon_Shock']).T
+print(desc_df.round(6).to_string())
+
+###############################
+    #Тест на стационарность для шоков монетарной политики
+###############################
+variables_to_test = ['Mon_Shock']
+
+df_test = df_taylor[variables_to_test]
+
+stationarity_results = []
+for var in variables_to_test:
+    result = stationarity_tests(df_taylor[var], var)
+    stationarity_results.append(result)
+
+stationarity_df = pd.DataFrame(stationarity_results)
+print("\n" + "="*60)
+print("РЕЗУЛЬТАТЫ ТЕСТОВ ДЛЯ ШОКОВ")
+print("="*60)
+print(stationarity_df.to_string())
+
+##############################
+# Тест Фридмана на сезонность
+##############################
+variables_for_analysis = [
+    ('Mon_Shock', 'Шоки монетарной политики')]
+friedman_results = []
+
+for var_col, var_name in variables_for_analysis:
+    if var_col in df_taylor.columns:
+        result = friedman_seasonality_test(df_taylor, date_col='Date', 
+                                          value_col=var_col, 
+                                          test_name=var_name)
+        if result:
+            friedman_results.append(result)
+
+# Сохраняем результаты Фридмана
+friedman_summary = pd.DataFrame([
+    {
+        'Variable': r['variable'],
+        'Chi_Squared': r['chi_squared'],
+        'P_Value': r['p_value'],
+        'Has_Seasonality': r['has_seasonality'],
+        'N_Years': r['n_years'],
+        'N_Months': r['n_months']
+    } 
+    for r in friedman_results
+])
+
+print("\n" + "="*60)
+print("РЕЗУЛЬТАТЫ ТЕСТОВ ФРИДМАНА")
+print("="*80)
+print(friedman_summary.to_string(index=False))
+
+###############################
+# Ядерная оценка плотности распределения остатков
+###############################
+
+# Получаем остатки из лучшей модели
+residuals = model9.resid
+
+print("\n" + "="*80)
+print("ЯДЕРНАЯ ОЦЕНКА ПЛОТНОСТИ РАСПРЕДЕЛЕНИЯ ОСТАТКОВ МОДЕЛИ")
+print("="*80)
+
+fig, ax = plt.subplots(figsize=(10, 6))
+
+# KDE + гистограмма
+sns.kdeplot(residuals, fill=True, color='red', alpha=0.3, linewidth=2.5, label='KDE остатков')
+
+# Нормальное распределение для сравнения
+mu = residuals.mean()
+sigma = residuals.std()
+x = np.linspace(residuals.min(), residuals.max(), 100)
+normal_dist = stats.norm.pdf(x, mu, sigma)
+ax.plot(x, normal_dist, 'k-', linewidth=2, label='Нормальное распределение')
+
+# Галочки остатков внизу оси X
+for residual in residuals:
+    ax.plot(residual, 0, '|', color='black', markersize=10, alpha=0.5)
+
+ax.set_title('Распределение шоков ставки ДКП', fontsize=13, fontweight='bold', pad=15)
+ax.set_xlabel('Остатки', fontsize=11)
+ax.set_ylabel('Плотность', fontsize=11)
+ax.legend(loc='best', fontsize=10)
+ax.grid(alpha=0.3, linestyle='--')
+ax.set_xlim(residuals.min() - 1, residuals.max() + 1)
+
+plt.tight_layout()
+plt.show()
+
+print(f"\nПараметры распределения:")
+print(f"  Среднее остатков: {residuals.mean():.6f}")
+print(f"  Стд. отклонение: {residuals.std():.6f}")
+print(f"  Асимметрия (Skewness): {stats.skew(residuals):.4f}")
+print(f"  Эксцесс (Kurtosis): {stats.kurtosis(residuals):.4f}")
+print(f"  N наблюдений: {len(residuals)}")
+
+
+
+print(stationarity_df.to_string())
 
 
 
