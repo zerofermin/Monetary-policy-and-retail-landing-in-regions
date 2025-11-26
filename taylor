@@ -2356,7 +2356,3 @@ print(f"  N наблюдений: {len(residuals)}")
 
 
 
-print(stationarity_df.to_string())
-
-
-
