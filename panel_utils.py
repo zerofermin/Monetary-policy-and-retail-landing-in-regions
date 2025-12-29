@@ -1039,3 +1039,183 @@ class ModelResultsAggregator:
 
         result = pd.concat([result, nobs_table])
         return result
+
+
+def run_panel_regressions(y, X, cov_type, cluster_entity=None):
+    from linearmodels.panel import PanelOLS, RandomEffects, PooledOLS
+
+    # ===== POOLED OLS =====
+    print("\n" + "="*70)
+    print("МОДЕЛЬ 1: POOLED OLS")
+    print("="*70)
+
+    try:
+        pooled_mod = PooledOLS(y, X)
+        pooled_res = pooled_mod.fit(cov_type=cov_type)
+        print(pooled_res.summary)
+        pooled_success = True
+    except Exception as e:
+        print(f"ERROR: {e}")
+        pooled_res = None
+        pooled_success = False
+
+    # ===== FIXED EFFECTS =====
+    print("\n" + "="*70)
+    print("МОДЕЛЬ 2: FIXED EFFECTS (WITHIN)")
+    print("="*70)
+
+    try:
+        fe_mod = PanelOLS(y, X, entity_effects=True)
+        if cluster_entity is None:
+            fe_res = fe_mod.fit(cov_type=cov_type)
+        else:
+            fe_res = fe_mod.fit(cov_type=cov_type, cluster_entity=cluster_entity)
+        print(fe_res.summary)
+        fe_success = True
+    except Exception as e:
+        print(f"ERROR: {e}")
+        fe_res = None
+        fe_success = False
+
+    # ===== RANDOM EFFECTS =====
+    print("\n" + "="*70)
+    print("МОДЕЛЬ 3: RANDOM EFFECTS")
+    print("="*70)
+
+    try:
+        re_mod = RandomEffects(y, X)
+        re_res = re_mod.fit(cov_type=cov_type)
+        print(re_res.summary)
+        re_success = True
+    except Exception as e:
+        print(f"ERROR: {e}")
+        re_res = None
+        re_success = False
+
+    return pooled_res, fe_res, re_res, pooled_success, fe_success, re_success
+
+
+def run_spec_tests(y, X, pooled_res, fe_res, re_res, pooled_success, fe_success, re_success):
+    from scipy.stats import chi2, f
+
+    hausman_stat = None
+    hausman_pval = None
+    bp_lm_stat = None
+    bp_lm_pval = None
+    f_stat = None
+    f_pval = None
+
+    df_clean = X
+    exog_vars_for_regression = list(X.columns)
+
+    # ТЕСТ ХАУСМАНА
+    print("\n ТЕСТ ХАУСМАНА (FE vs RE)")
+    print("-"*70)
+
+    if fe_success and re_success:
+        try:
+            coef_diff = (fe_res.params - re_res.params).dropna()
+
+            var_fe = fe_res.cov.loc[coef_diff.index, coef_diff.index]
+            var_re = re_res.cov.loc[coef_diff.index, coef_diff.index]
+            var_diff = var_fe - var_re
+
+            try:
+                inv_var_diff = np.linalg.inv(var_diff.values)
+            except np.linalg.LinAlgError:
+                print("Матрица сингулярна, используется pseudo-inverse")
+                inv_var_diff = np.linalg.pinv(var_diff.values)
+
+            H = coef_diff.values @ inv_var_diff @ coef_diff.values
+            p_val = 1 - chi2.cdf(H, df=len(coef_diff))
+
+            print(f"H-статистика: {H:.4f}")
+            print(f"p-значение: {p_val:.6f}")
+            print(f"df: {len(coef_diff)}")
+
+            hausman_stat = float(H)
+            hausman_pval = float(p_val)
+
+            if p_val < 0.05:
+                print("\nВывод: p < 0.05 - Используйте FIXED EFFECTS")
+            else:
+                print("\nВывод: p >= 0.05 - Используйте RANDOM EFFECTS")
+        except Exception as e:
+            print(f"ERROR: {e}")
+    else:
+        print("Невозможно провести (требуются обе модели)")
+
+    # ТЕСТ БРЕУША-ПАГАНА
+    print("\n ТЕСТ БРЕУША-ПАГАНА (RE vs Pooled)")
+    print("-"*70)
+
+    if re_success and pooled_success:
+        try:
+            u_pooled = (y.values - X.values @ pooled_res.params.values.reshape(-1, 1)).flatten()
+            sigma_u_sq = (u_pooled**2).sum() / len(u_pooled)
+
+            regions = df_clean.index.get_level_values('Region').unique()
+            N = len(regions)
+            T = len(df_clean) // N
+
+            sum_mean_u_sq = 0
+            for region in regions:
+                u_region = u_pooled[df_clean.index.get_level_values('Region') == region]
+                mean_u = u_region.mean()
+                sum_mean_u_sq += mean_u**2
+
+            LM = (N * T**2) / (2 * (T - 1)) * (sum_mean_u_sq / (sigma_u_sq * N) - 1)**2
+            p_val_bp = 1 - chi2.cdf(LM, df=1)
+
+            print(f"LM статистика: {LM:.4f}")
+            print(f"p-значение: {p_val_bp:.6f}")
+            print(f"N (регионов): {N}, T (периодов): {T}")
+
+            bp_lm_stat = float(LM)
+            bp_lm_pval = float(p_val_bp)
+
+            if p_val_bp < 0.05:
+                print("\nВывод: p < 0.05 - Есть региональные эффекты (используй RE или FE)")
+            else:
+                print("\nВывод: p >= 0.05 - Нет эффектов (адекватна Pooled)")
+        except Exception as e:
+            print(f"ERROR: {e}")
+    else:
+        print("Невозможно провести")
+
+    # F-ТЕСТ
+    print("\n F-ТЕСТ (FE vs Pooled)")
+    print("-"*70)
+
+    if fe_success and pooled_success:
+        try:
+            N = df_clean.index.get_level_values('Region').nunique()
+            T = df_clean.index.get_level_values('Date').nunique()
+            k = len(exog_vars_for_regression)
+
+            u_pooled = (y.values - X.values @ pooled_res.params.values.reshape(-1, 1)).flatten()
+            u_fe = (y.values - X.values @ fe_res.params.values.reshape(-1, 1)).flatten()
+
+            SSR_pooled = (u_pooled**2).sum()
+            SSR_fe = (u_fe**2).sum()
+
+            F_stat = ((SSR_pooled - SSR_fe) / (N - 1)) / (SSR_fe / (N*T - N - k))
+            p_val_f = 1 - f.cdf(F_stat, N-1, N*T - N - k)
+
+            print(f"F-статистика: {F_stat:.4f}")
+            print(f"p-значение: {p_val_f:.6f}")
+            print(f"df: ({N-1}, {N*T - N - k})")
+
+            f_stat = float(F_stat)
+            f_pval = float(p_val_f)
+
+            if p_val_f < 0.05:
+                print("\nВывод: p < 0.05 - FE значимо лучше чем Pooled")
+            else:
+                print("\nВывод: p >= 0.05 - Pooled адекватна")
+        except Exception as e:
+            print(f"ERROR: {e}")
+    else:
+        print("Невозможно провести")
+
+    return hausman_stat, hausman_pval, bp_lm_stat, bp_lm_pval, f_stat, f_pval
