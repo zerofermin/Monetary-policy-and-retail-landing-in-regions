@@ -106,12 +106,22 @@ class ModelResultsAggregator:
             df = df[df['specification'].isin(specification_filter)]
 
         # порядок столбцов по спецификациям
-        col_order = list(dict.fromkeys(df['specification']))
+        spec_order = list(dict.fromkeys(df['specification']))
+        model_order = ['POOL', 'FE', 'RE']
+        col_pairs = []
+        for spec in spec_order:
+            spec_models = df.loc[df['specification'] == spec, 'model_type'].unique().tolist()
+            for model_type in model_order:
+                if model_type in spec_models:
+                    col_pairs.append((spec, model_type))
+
+        col_index = pd.MultiIndex.from_tuples(col_pairs, names=['specification', 'model_type'])
+        col_names = [f"{spec} ({model_type})" for spec, model_type in col_pairs]
 
         # тело таблицы
         body_dict = {}
-        for spec in col_order:
-            subset = df[df['specification'] == spec]
+        for spec, model_type in col_pairs:
+            subset = df[(df['specification'] == spec) & (df['model_type'] == model_type)]
             col_data = {}
             for _, row in subset.iterrows():
                 var = row['variable']
@@ -125,45 +135,51 @@ class ModelResultsAggregator:
                     cell = f"{coef:.{decimals}f}{stars}"
 
                 col_data[var] = cell
-            body_dict[spec] = col_data
+            body_dict[f"{spec} ({model_type})"] = col_data
 
-        body_df = pd.DataFrame(body_dict).reindex(columns=col_order).fillna('')
+        body_df = pd.DataFrame(body_dict).reindex(columns=col_names).fillna('')
 
         # Зависимая переменная (верхняя строка)
-        dep_names = (df.groupby('specification')['dependent_var']
+        dep_names = (df.groupby(['specification', 'model_type'])['dependent_var']
                        .first()
-                       .reindex(col_order))
+                       .reindex(col_index))
+        dep_names.index = col_names
         dep_row = pd.DataFrame([dep_names], index=['Зависимая переменная'])
 
         # R^2
-        r2_vals = (df.groupby('specification')['r_squared']
+        r2_vals = (df.groupby(['specification', 'model_type'])['r_squared']
                      .max()
                      .round(decimals)
-                     .reindex(col_order))
+                     .reindex(col_index))
+        r2_vals.index = col_names
         r2_row = pd.DataFrame([r2_vals], index=['R^2'])
 
         # Тип стандартных ошибок (под R^2)
-        se_vals = (df.groupby('specification')['se_type']
+        se_vals = (df.groupby(['specification', 'model_type'])['se_type']
                      .first()
-                     .reindex(col_order))
+                     .reindex(col_index))
+        se_vals.index = col_names
         se_row = pd.DataFrame([se_vals], index=['Тип стандартных ошибок'])
 
         # n-obs (число наблюдений)
-        nobs_vals = (df.groupby('specification')['nobs']
+        nobs_vals = (df.groupby(['specification', 'model_type'])['nobs']
                        .max()
-                       .reindex(col_order))
+                       .reindex(col_index))
+        nobs_vals.index = col_names
         nobs_row = pd.DataFrame([nobs_vals], index=['n-obs'])
 
         # Метод оценки (предпоследняя строка)
-        model_names = (df.groupby('specification')['model_type']
+        model_names = (df.groupby(['specification', 'model_type'])['model_type']
                          .first()
-                         .reindex(col_order))
+                         .reindex(col_index))
+        model_names.index = col_names
         model_row = pd.DataFrame([model_names], index=['Метод оценки'])
 
         # Выборка (последняя строка)
-        subsample_vals = (df.groupby('specification')['subsample']
+        subsample_vals = (df.groupby(['specification', 'model_type'])['subsample']
                             .first()
-                            .reindex(col_order))
+                            .reindex(col_index))
+        subsample_vals.index = col_names
         subsample_row = pd.DataFrame([subsample_vals], index=['Выборка'])
 
         # Итог: Зависимая переменная -> тело -> R^2 -> Тип SE -> n-obs -> Метод -> Выборка

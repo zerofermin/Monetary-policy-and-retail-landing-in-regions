@@ -1041,8 +1041,70 @@ class ModelResultsAggregator:
         return result
 
 
-def run_panel_regressions(y, X, cov_type, cluster_entity=None):
+def run_panel_regressions(df_input, df_reg, dependent_var, exog_vars_initial, cov_type, cluster_entity=None, df_name=None):
     from linearmodels.panel import PanelOLS, RandomEffects, PooledOLS
+
+    df_label_map = {
+        'df_reg': 'ОБЩАЯ ВЫБОРКА',
+        'df_reg_clus_one': 'КЛАСТЕР 1',
+        'df_reg_clus_two': 'КЛАСТЕР 2',
+        'df_reg_clus_three': 'КЛАСТЕР 3'
+    }
+    if df_name is None:
+        if df_input is df_reg:
+            df_name = 'df_reg'
+    df_label = df_label_map.get(df_name, df_name if df_name else 'ДАННЫЕ')
+    roisfix_suffix = ''
+    if any('ROISFIX' in var for var in exog_vars_initial):
+        if df_name == 'df_reg':
+            roisfix_suffix = ' - ROISFIX'
+        else:
+            df_label = f"{df_label} ROISFIX"
+
+    print("="*70)
+    print(f"ПАНЕЛЬНАЯ РЕГРЕССИЯ: POOL + FE + RE ({df_label}){roisfix_suffix}")
+    print(f"Зависимая переменная: {dependent_var}")
+    print("="*70)
+
+    # Создаем копию df_reg для работы
+    df_clean = df_input.copy()  # логика без изменений
+
+    # Приводим df_reg к формату с Region и Date как столбцами
+    if isinstance(df_reg.index, pd.MultiIndex):
+        df_reg_temp = df_reg.reset_index()
+    else:
+        df_reg_temp = df_reg.copy()
+
+    # Проверяем наличие зависимой переменной
+    if dependent_var in df_reg_temp.columns:
+        # Присоединяем зависимую переменную по Region и Date
+        df_clean = df_clean.merge(
+            df_reg_temp[['Region', 'Date', dependent_var]],
+            on=['Region', 'Date'],
+            how='left',
+            suffixes=('', '_from_reg')
+        )
+    else:
+        print(f"ERROR - {dependent_var} отсутствует в df_reg_temp")
+
+    # Проверяем независимые переменные
+    exog_vars_for_regression = []
+    for var in exog_vars_initial:
+        if var in df_clean.columns:
+            exog_vars_for_regression.append(var)
+        else:
+            print(f"  WARNING: {var} исключена")
+
+    # Удаляем NaN
+    cols_to_check = [dependent_var] + exog_vars_for_regression
+    df_clean = df_clean.dropna(subset=cols_to_check)
+
+    # ===== Установка панельного индекса =====
+    df_clean = df_clean.set_index(['Region', 'Date']).sort_index()
+
+    # ===== Подготовка Y и X =====
+    y = df_clean[[dependent_var]]
+    X = df_clean[exog_vars_for_regression]
 
     # ===== POOLED OLS =====
     print("\n" + "="*70)
@@ -1092,7 +1154,136 @@ def run_panel_regressions(y, X, cov_type, cluster_entity=None):
         re_res = None
         re_success = False
 
-    return pooled_res, fe_res, re_res, pooled_success, fe_success, re_success
+    return y, X, pooled_res, fe_res, re_res, pooled_success, fe_success, re_success
+
+
+def run_panel_regressions_trend(df_input, df_reg, dependent_var, exog_vars_initial, cov_type, cluster_entity=None, df_name=None, trend=True):
+    from linearmodels.panel import PanelOLS, RandomEffects, PooledOLS
+
+    df_label_map = {
+        'df_reg': 'ОБЩАЯ ВЫБОРКА',
+        'df_reg_clus_one': 'КЛАСТЕР 1',
+        'df_reg_clus_two': 'КЛАСТЕР 2',
+        'df_reg_clus_three': 'КЛАСТЕР 3'
+    }
+    if df_name is None:
+        if df_input is df_reg:
+            df_name = 'df_reg'
+    df_label = df_label_map.get(df_name, df_name if df_name else 'ДАННЫЕ')
+    roisfix_suffix = ''
+    if any('ROISFIX' in var for var in exog_vars_initial):
+        if df_name == 'df_reg':
+            roisfix_suffix = ' - ROISFIX'
+        else:
+            df_label = f"{df_label} ROISFIX"
+
+    print("="*70)
+    print(f"ПАНЕЛЬНАЯ РЕГРЕССИЯ: POOL + FE + RE ({df_label}){roisfix_suffix}")
+    print(f"Зависимая переменная: {dependent_var}")
+    print("="*70)
+
+    # Создаем копию df_reg для работы
+    df_clean = df_input.copy()  # логика без изменений
+
+    # Приводим df_reg к формату с Region и Date как столбцами
+    if isinstance(df_reg.index, pd.MultiIndex):
+        df_reg_temp = df_reg.reset_index()
+    else:
+        df_reg_temp = df_reg.copy()
+
+    # Проверяем наличие зависимой переменной
+    if dependent_var in df_reg_temp.columns:
+        # Присоединяем зависимую переменную по Region и Date
+        df_clean = df_clean.merge(
+            df_reg_temp[['Region', 'Date', dependent_var]],
+            on=['Region', 'Date'],
+            how='left',
+            suffixes=('', '_from_reg')
+        )
+    else:
+        print(f"ERROR - {dependent_var} отсутствует в df_reg_temp")
+
+    # Проверяем независимые переменные
+    exog_vars_for_regression = []
+    for var in exog_vars_initial:
+        if var in df_clean.columns:
+            exog_vars_for_regression.append(var)
+        else:
+            print(f"  WARNING: {var} исключена")
+
+    # Удаляем NaN
+    cols_to_check = [dependent_var] + exog_vars_for_regression
+    df_clean = df_clean.dropna(subset=cols_to_check)
+
+    # Общий тренд по времени (одинаковый для всех регионов)
+    if trend:
+        unique_dates = pd.Series(df_clean['Date'].unique()).sort_values()
+        date_to_trend = {date: i + 1 for i, date in enumerate(unique_dates)}
+        df_clean['trend'] = df_clean['Date'].map(date_to_trend)
+        if 'trend' not in exog_vars_for_regression:
+            exog_vars_for_regression.append('trend')
+
+    # ===== Установка панельного индекса =====
+    df_clean = df_clean.set_index(['Region', 'Date']).sort_index()
+
+    # ===== Подготовка Y и X =====
+    y = df_clean[[dependent_var]]
+    X = df_clean[exog_vars_for_regression]
+    if trend:
+        exog_vars_re = [var for var in exog_vars_for_regression if var != 'trend']
+        X_re = df_clean[exog_vars_re]
+    else:
+        X_re = X
+
+    # ===== POOLED OLS =====
+    print("\n" + "="*70)
+    print("МОДЕЛЬ 1: POOLED OLS")
+    print("="*70)
+
+    try:
+        pooled_mod = PooledOLS(y, X)
+        pooled_res = pooled_mod.fit(cov_type=cov_type)
+        print(pooled_res.summary)
+        pooled_success = True
+    except Exception as e:
+        print(f"ERROR: {e}")
+        pooled_res = None
+        pooled_success = False
+
+    # ===== FIXED EFFECTS =====
+    print("\n" + "="*70)
+    print("МОДЕЛЬ 2: FIXED EFFECTS (WITHIN)")
+    print("="*70)
+
+    try:
+        fe_mod = PanelOLS(y, X, entity_effects=True)
+        if cluster_entity is None:
+            fe_res = fe_mod.fit(cov_type=cov_type)
+        else:
+            fe_res = fe_mod.fit(cov_type=cov_type, cluster_entity=cluster_entity)
+        print(fe_res.summary)
+        fe_success = True
+    except Exception as e:
+        print(f"ERROR: {e}")
+        fe_res = None
+        fe_success = False
+
+    # ===== RANDOM EFFECTS =====
+    print("\n" + "="*70)
+    print("МОДЕЛЬ 3: RANDOM EFFECTS")
+    print("="*70)
+
+    try:
+        re_mod = RandomEffects(y, X_re)
+        re_res = re_mod.fit(cov_type=cov_type)
+        print(re_res.summary)
+        re_success = True
+    except Exception as e:
+        print(f"ERROR: {e}")
+        re_res = None
+        re_success = False
+
+    return y, X, pooled_res, fe_res, re_res, pooled_success, fe_success, re_success
 
 
 def run_spec_tests(y, X, pooled_res, fe_res, re_res, pooled_success, fe_success, re_success):
@@ -1107,6 +1298,10 @@ def run_spec_tests(y, X, pooled_res, fe_res, re_res, pooled_success, fe_success,
 
     df_clean = X
     exog_vars_for_regression = list(X.columns)
+
+    print("\n" + "="*70)
+    print("ТЕСТЫ СПЕЦИФИКАЦИИ")
+    print("="*70)
 
     # ТЕСТ ХАУСМАНА
     print("\n ТЕСТ ХАУСМАНА (FE vs RE)")
@@ -1219,3 +1414,326 @@ def run_spec_tests(y, X, pooled_res, fe_res, re_res, pooled_success, fe_success,
         print("Невозможно провести")
 
     return hausman_stat, hausman_pval, bp_lm_stat, bp_lm_pval, f_stat, f_pval
+
+
+def run_panel_model_diagnostics(
+    y,
+    X,
+    pooled_res=None,
+    fe_res=None,
+    re_res=None,
+    pooled_success=True,
+    fe_success=True,
+    re_success=True,
+    model_label=None,
+    pval_threshold=0.05,
+    shock_vars=None,
+    max_shapiro_n=5000,
+):
+    import numpy as np
+    import pandas as pd
+    import statsmodels.api as sm
+    from scipy import stats
+    from statsmodels.stats.diagnostic import het_breuschpagan, het_white
+    from statsmodels.stats.stattools import durbin_watson, jarque_bera
+
+    def _as_series(obj):
+        if obj is None:
+            return None
+        if isinstance(obj, pd.DataFrame):
+            if obj.shape[1] == 1:
+                return obj.iloc[:, 0]
+            return obj.squeeze()
+        if isinstance(obj, pd.Series):
+            return obj
+        return pd.Series(np.asarray(obj).flatten())
+
+    def _get_residuals(res):
+        if res is None:
+            return None
+        for attr in ("resids", "resid"):
+            if hasattr(res, attr):
+                out = _as_series(getattr(res, attr))
+                if out is not None:
+                    return out
+        return None
+
+    def _align(y_in, X_in, resids_in=None):
+        y_s = _as_series(y_in)
+        X_df = X_in.copy() if isinstance(X_in, pd.DataFrame) else None
+        resids_s = _as_series(resids_in)
+
+        idx = None
+        for obj in (y_s, X_df, resids_s):
+            if obj is not None and hasattr(obj, "index"):
+                idx = obj.index if idx is None else idx.intersection(obj.index)
+        if idx is not None:
+            if y_s is not None:
+                y_s = y_s.loc[idx]
+            if X_df is not None:
+                X_df = X_df.loc[idx]
+            if resids_s is not None:
+                resids_s = resids_s.loc[idx]
+        return y_s, X_df, resids_s
+
+    def _format_pvalue(pval):
+        if pval is None or (isinstance(pval, float) and np.isnan(pval)):
+            return "nan"
+        return f"{pval:.6f}"
+
+    def _hetero_tests(resids, X_in):
+        exog = sm.add_constant(X_in, has_constant="add")
+        bp_stat, bp_p, _, _ = het_breuschpagan(resids, exog)
+        w_stat, w_p, _, _ = het_white(resids, exog)
+        return {
+            "bp_stat": float(bp_stat),
+            "bp_p": float(bp_p),
+            "white_stat": float(w_stat),
+            "white_p": float(w_p),
+        }
+
+    def _normality_tests(resids):
+        if len(resids) < 3:
+            return {
+                "jb_stat": np.nan,
+                "jb_p": np.nan,
+                "jb_skew": np.nan,
+                "jb_kurt": np.nan,
+                "shapiro_stat": np.nan,
+                "shapiro_p": np.nan,
+                "shapiro_n": int(len(resids)),
+            }
+        jb_stat, jb_p, skew, kurt = jarque_bera(resids)
+        if len(resids) > max_shapiro_n:
+            shapiro_sample = resids.sample(max_shapiro_n, random_state=42)
+            shapiro_n = max_shapiro_n
+        else:
+            shapiro_sample = resids
+            shapiro_n = len(resids)
+        shapiro_stat, shapiro_p = stats.shapiro(shapiro_sample)
+        return {
+            "jb_stat": float(jb_stat),
+            "jb_p": float(jb_p),
+            "jb_skew": float(skew),
+            "jb_kurt": float(kurt),
+            "shapiro_stat": float(shapiro_stat),
+            "shapiro_p": float(shapiro_p),
+            "shapiro_n": int(shapiro_n),
+        }
+
+    def _wooldridge_test(resids):
+        if not isinstance(resids.index, pd.MultiIndex) or len(resids.index.names) < 2:
+            return None
+        idx_names = list(resids.index.names)
+        if "Region" in idx_names and "Date" in idx_names:
+            entity = "Region"
+            time = "Date"
+        else:
+            entity = idx_names[0]
+            time = idx_names[1]
+        df = resids.rename("resid").reset_index()
+        df = df.sort_values([entity, time])
+        df["resid_lag"] = df.groupby(entity)["resid"].shift(1)
+        df["diff"] = df["resid"] - df["resid_lag"]
+        df = df.dropna(subset=["resid_lag", "diff"])
+        if df.empty or df["resid_lag"].var() == 0:
+            return None
+        ols_res = sm.OLS(df["diff"].values, df["resid_lag"].values).fit()
+        beta = float(ols_res.params[0])
+        se = float(ols_res.bse[0])
+        if se == 0 or np.isnan(se):
+            return None
+        t_stat = (beta + 0.5) / se
+        p_val = 2 * (1 - stats.t.cdf(abs(t_stat), df=ols_res.df_resid))
+        return {
+            "beta": beta,
+            "t_stat": float(t_stat),
+            "p_val": float(p_val),
+            "nobs": int(ols_res.nobs),
+        }
+
+    def _pesaran_cd(resids):
+        if not isinstance(resids.index, pd.MultiIndex) or len(resids.index.names) < 2:
+            return None
+        idx_names = list(resids.index.names)
+        if "Region" in idx_names:
+            entity_level = idx_names.index("Region")
+        else:
+            entity_level = 0
+        wide = resids.unstack(level=entity_level)
+        if wide.shape[1] < 2:
+            return None
+        corr = wide.corr()
+        upper_mask = np.triu(np.ones(corr.shape), k=1).astype(bool)
+        upper = corr.where(upper_mask)
+        rho_sum = upper.stack().sum()
+        n_pairs = int(upper.count().sum())
+        if n_pairs == 0:
+            return None
+        valid = ~wide.isna()
+        overlap = valid.T @ valid
+        upper_overlap = overlap.where(upper_mask)
+        t_bar = float(upper_overlap.stack().mean())
+        n_entities = wide.shape[1]
+        cd_stat = np.sqrt(2 * t_bar / (n_entities * (n_entities - 1))) * rho_sum
+        p_val = 2 * (1 - stats.norm.cdf(abs(cd_stat)))
+        return {
+            "cd_stat": float(cd_stat),
+            "p_val": float(p_val),
+            "n_entities": int(n_entities),
+            "t_bar": float(t_bar),
+        }
+
+    def _dwh_tests(y_s, X_df):
+        y_s = _as_series(y_s)
+        if y_s is None or X_df is None or X_df.empty:
+            return None
+        results = []
+        for var in X_df.columns:
+            X_exog = X_df.drop(columns=[var])
+            if X_exog.shape[1] == 0:
+                continue
+            z = sm.add_constant(X_exog, has_constant="add")
+            try:
+                stage1 = sm.OLS(X_df[var].astype(float), z).fit()
+                v_hat = stage1.resid
+            except Exception:
+                continue
+            X_aug = pd.concat([X_df, v_hat.rename(f"{var}_resid")], axis=1)
+            X_aug = sm.add_constant(X_aug, has_constant="add")
+            try:
+                stage2 = sm.OLS(y_s.astype(float), X_aug).fit()
+                coef = float(stage2.params[f"{var}_resid"])
+                se = float(stage2.bse[f"{var}_resid"])
+                if se == 0 or np.isnan(se):
+                    continue
+                t_stat = coef / se
+                p_val = 2 * (1 - stats.t.cdf(abs(t_stat), df=stage2.df_resid))
+                results.append({
+                    "variable": var,
+                    "t_stat": float(t_stat),
+                    "p_val": float(p_val),
+                })
+            except Exception:
+                continue
+        if not results:
+            return None
+        return pd.DataFrame(results).sort_values("p_val")
+
+    def _shock_wald(res, shock_vars_in):
+        if res is None:
+            return None
+        shock_vars_in = shock_vars_in or []
+        params = getattr(res, "params", None)
+        cov = getattr(res, "cov", None)
+        if params is None or cov is None:
+            return None
+        present = [v for v in shock_vars_in if v in params.index]
+        if not present:
+            return None
+        b = params.loc[present].values
+        v = cov.loc[present, present].values
+        try:
+            inv_v = np.linalg.inv(v)
+        except np.linalg.LinAlgError:
+            inv_v = np.linalg.pinv(v)
+        stat = float(b.T @ inv_v @ b)
+        p_val = float(1 - stats.chi2.cdf(stat, df=len(present)))
+        return {"stat": stat, "p_val": p_val, "vars": present}
+
+    shock_vars = shock_vars or ["Covid_dum", "Sank_dum"]
+    model_name = model_label
+    if model_name is None and isinstance(y, pd.DataFrame) and y.shape[1] == 1:
+        model_name = y.columns[0]
+
+    print("\n" + "=" * 80)
+    print("MODEL DIAGNOSTICS")
+    if model_name:
+        print(f"Target: {model_name}")
+    print("=" * 80)
+    print(f"p-value threshold: {pval_threshold}")
+
+    y_aligned, X_aligned, _ = _align(y, X, None)
+
+    dwh_df = _dwh_tests(y_aligned, X_aligned)
+    if dwh_df is None:
+        print("\nEndogeneity (Durbin-Wu-Hausman, control-function): skipped")
+    else:
+        print("\nEndogeneity (Durbin-Wu-Hausman, control-function)")
+        print("H0: regressor is exogenous (p < threshold suggests endogeneity).")
+        print(dwh_df.to_string(index=False, formatters={"p_val": _format_pvalue}))
+
+    def _run_for_model(label, res, success):
+        print("\n" + "-" * 70)
+        print(f"MODEL: {label}")
+        print("-" * 70)
+        if not success or res is None:
+            print("Model failed or missing; diagnostics skipped.")
+            return
+        resids = _get_residuals(res)
+        if resids is None:
+            print("Residuals not available; diagnostics skipped.")
+            return
+        y_m, X_m, resids = _align(y, X, resids)
+        if X_m is None or resids is None:
+            print("Data alignment failed; diagnostics skipped.")
+            return
+        resids = resids.dropna()
+        if resids.empty:
+            print("No residuals after alignment; diagnostics skipped.")
+            return
+
+        try:
+            hetero = _hetero_tests(resids, X_m)
+            print("\nHeteroskedasticity tests")
+            print(f"Breusch-Pagan: stat={hetero['bp_stat']:.4f}, p={_format_pvalue(hetero['bp_p'])}")
+            print(f"White:         stat={hetero['white_stat']:.4f}, p={_format_pvalue(hetero['white_p'])}")
+        except Exception as e:
+            print(f"\nHeteroskedasticity tests error: {e}")
+
+        try:
+            normal = _normality_tests(resids)
+            print("\nNormality tests")
+            print(f"Jarque-Bera: stat={normal['jb_stat']:.4f}, p={_format_pvalue(normal['jb_p'])}, "
+                  f"skew={normal['jb_skew']:.4f}, kurt={normal['jb_kurt']:.4f}")
+            print(f"Shapiro-Wilk (n={normal['shapiro_n']}): stat={normal['shapiro_stat']:.4f}, "
+                  f"p={_format_pvalue(normal['shapiro_p'])}")
+        except Exception as e:
+            print(f"\nNormality tests error: {e}")
+
+        try:
+            dw = durbin_watson(resids.values)
+            print("\nAutocorrelation tests")
+            print(f"Durbin-Watson: {dw:.4f}")
+            wool = _wooldridge_test(resids)
+            if wool is None:
+                print("Wooldridge test: skipped (needs panel index).")
+            else:
+                print(f"Wooldridge AR(1): beta={wool['beta']:.4f}, "
+                      f"t={wool['t_stat']:.4f}, p={_format_pvalue(wool['p_val'])}, n={wool['nobs']}")
+        except Exception as e:
+            print(f"\nAutocorrelation tests error: {e}")
+
+        try:
+            cd = _pesaran_cd(resids)
+            if cd is None:
+                print("\nCross-sectional dependence: skipped (needs panel data).")
+            else:
+                print("\nCross-sectional dependence (Pesaran CD)")
+                print(f"CD stat={cd['cd_stat']:.4f}, p={_format_pvalue(cd['p_val'])}, "
+                      f"N={cd['n_entities']}, T_avg={cd['t_bar']:.2f}")
+        except Exception as e:
+            print(f"\nCross-sectional dependence error: {e}")
+
+        try:
+            shock = _shock_wald(res, shock_vars)
+            if shock is not None:
+                print("\nShock dummy joint test")
+                vars_str = ", ".join(shock["vars"])
+                print(f"Wald({vars_str}) stat={shock['stat']:.4f}, p={_format_pvalue(shock['p_val'])}")
+        except Exception as e:
+            print(f"\nShock dummy test error: {e}")
+
+    _run_for_model("Pooled OLS", pooled_res, pooled_success)
+    _run_for_model("Fixed Effects", fe_res, fe_success)
+    _run_for_model("Random Effects", re_res, re_success)

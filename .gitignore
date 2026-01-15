@@ -2,3 +2,6 @@
 *.xlsx
 *.json
 removed.py
+mon_shock_dataset.pkl
+region_cluster_dataset.pkl
+Описание результатов/
