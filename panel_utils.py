@@ -1127,9 +1127,9 @@ def run_panel_regressions(df_input, df_reg, dependent_var, exog_vars_initial, co
     print("="*70)
 
     try:
-        fe_mod = PanelOLS(y, X, entity_effects=True)
+        fe_mod = PanelOLS(y, X, entity_effects=True, drop_absorbed=True)
         if cluster_entity is None:
-            fe_res = fe_mod.fit(cov_type=cov_type)
+            fe_res = fe_mod.fit(cov_type=cov_type,)
         else:
             fe_res = fe_mod.fit(cov_type=cov_type, cluster_entity=cluster_entity)
         print(fe_res.summary)
