@@ -1041,7 +1041,7 @@ class ModelResultsAggregator:
         return result
 
 
-def run_panel_regressions(df_input, df_reg, dependent_var, exog_vars_initial, cov_type, cluster_entity=None, df_name=None):
+def run_panel_regressions(df_input, df_reg, dependent_var, exog_vars_initial, cov_type, cluster_entity=None, df_name=None, intercept=True):
     from linearmodels.panel import PanelOLS, RandomEffects, PooledOLS
 
     df_label_map = {
@@ -1105,6 +1105,11 @@ def run_panel_regressions(df_input, df_reg, dependent_var, exog_vars_initial, co
     # ===== Подготовка Y и X =====
     y = df_clean[[dependent_var]]
     X = df_clean[exog_vars_for_regression]
+    X_pooled = X
+    X_re = X
+    if intercept:
+        X_pooled = sm.add_constant(X_pooled, has_constant="add")
+        X_re = sm.add_constant(X_re, has_constant="add")
 
     # ===== POOLED OLS =====
     print("\n" + "="*70)
@@ -1112,7 +1117,7 @@ def run_panel_regressions(df_input, df_reg, dependent_var, exog_vars_initial, co
     print("="*70)
 
     try:
-        pooled_mod = PooledOLS(y, X)
+        pooled_mod = PooledOLS(y, X_pooled)
         pooled_res = pooled_mod.fit(cov_type=cov_type)
         print(pooled_res.summary)
         pooled_success = True
@@ -1145,7 +1150,7 @@ def run_panel_regressions(df_input, df_reg, dependent_var, exog_vars_initial, co
     print("="*70)
 
     try:
-        re_mod = RandomEffects(y, X)
+        re_mod = RandomEffects(y, X_re)
         re_res = re_mod.fit(cov_type=cov_type)
         print(re_res.summary)
         re_success = True
@@ -1157,7 +1162,7 @@ def run_panel_regressions(df_input, df_reg, dependent_var, exog_vars_initial, co
     return y, X, pooled_res, fe_res, re_res, pooled_success, fe_success, re_success
 
 
-def run_panel_regressions_trend(df_input, df_reg, dependent_var, exog_vars_initial, cov_type, cluster_entity=None, df_name=None, trend=True):
+def run_panel_regressions_trend(df_input, df_reg, dependent_var, exog_vars_initial, cov_type, cluster_entity=None, df_name=None, trend=True, intercept=True):
     from linearmodels.panel import PanelOLS, RandomEffects, PooledOLS
 
     df_label_map = {
@@ -1234,6 +1239,11 @@ def run_panel_regressions_trend(df_input, df_reg, dependent_var, exog_vars_initi
         X_re = df_clean[exog_vars_re]
     else:
         X_re = X
+    X_pooled = X
+    X_re_fit = X_re
+    if intercept:
+        X_pooled = sm.add_constant(X_pooled, has_constant="add")
+        X_re_fit = sm.add_constant(X_re_fit, has_constant="add")
 
     # ===== POOLED OLS =====
     print("\n" + "="*70)
@@ -1241,7 +1251,7 @@ def run_panel_regressions_trend(df_input, df_reg, dependent_var, exog_vars_initi
     print("="*70)
 
     try:
-        pooled_mod = PooledOLS(y, X)
+        pooled_mod = PooledOLS(y, X_pooled)
         pooled_res = pooled_mod.fit(cov_type=cov_type)
         print(pooled_res.summary)
         pooled_success = True
@@ -1274,7 +1284,7 @@ def run_panel_regressions_trend(df_input, df_reg, dependent_var, exog_vars_initi
     print("="*70)
 
     try:
-        re_mod = RandomEffects(y, X_re)
+        re_mod = RandomEffects(y, X_re_fit)
         re_res = re_mod.fit(cov_type=cov_type)
         print(re_res.summary)
         re_success = True
@@ -1298,6 +1308,25 @@ def run_spec_tests(y, X, pooled_res, fe_res, re_res, pooled_success, fe_success,
 
     df_clean = X
     exog_vars_for_regression = list(X.columns)
+
+    def _align_exog_to_params(X_df, params):
+        if not isinstance(X_df, pd.DataFrame):
+            return X_df
+        if params is None:
+            return X_df
+        names = getattr(params, "index", None)
+        X_use = X_df
+        if names is not None:
+            if "const" in names and "const" not in X_use.columns:
+                X_use = sm.add_constant(X_use, has_constant="add")
+            missing = [name for name in names if name not in X_use.columns]
+            if not missing:
+                return X_use.loc[:, names]
+        if X_use.shape[1] != len(params):
+            X_try = sm.add_constant(X_use, has_constant="add")
+            if X_try.shape[1] == len(params):
+                return X_try
+        return X_use
 
     print("\n" + "="*70)
     print("ТЕСТЫ СПЕЦИФИКАЦИИ")
@@ -1346,7 +1375,8 @@ def run_spec_tests(y, X, pooled_res, fe_res, re_res, pooled_success, fe_success,
 
     if re_success and pooled_success:
         try:
-            u_pooled = (y.values - X.values @ pooled_res.params.values.reshape(-1, 1)).flatten()
+            X_pooled = _align_exog_to_params(X, pooled_res.params)
+            u_pooled = (y.values - X_pooled.values @ pooled_res.params.values.reshape(-1, 1)).flatten()
             sigma_u_sq = (u_pooled**2).sum() / len(u_pooled)
 
             regions = df_clean.index.get_level_values('Region').unique()
@@ -1388,8 +1418,10 @@ def run_spec_tests(y, X, pooled_res, fe_res, re_res, pooled_success, fe_success,
             T = df_clean.index.get_level_values('Date').nunique()
             k = len(exog_vars_for_regression)
 
-            u_pooled = (y.values - X.values @ pooled_res.params.values.reshape(-1, 1)).flatten()
-            u_fe = (y.values - X.values @ fe_res.params.values.reshape(-1, 1)).flatten()
+            X_pooled = _align_exog_to_params(X, pooled_res.params)
+            X_fe = _align_exog_to_params(X, fe_res.params)
+            u_pooled = (y.values - X_pooled.values @ pooled_res.params.values.reshape(-1, 1)).flatten()
+            u_fe = (y.values - X_fe.values @ fe_res.params.values.reshape(-1, 1)).flatten()
 
             SSR_pooled = (u_pooled**2).sum()
             SSR_fe = (u_fe**2).sum()
@@ -1429,6 +1461,7 @@ def run_panel_model_diagnostics(
     pval_threshold=0.05,
     shock_vars=None,
     max_shapiro_n=5000,
+    hetero_add_constant=True,
 ):
     import numpy as np
     import pandas as pd
@@ -1481,16 +1514,104 @@ def run_panel_model_diagnostics(
             return "nan"
         return f"{pval:.6f}"
 
-    def _hetero_tests(resids, X_in):
-        exog = sm.add_constant(X_in, has_constant="add")
-        bp_stat, bp_p, _, _ = het_breuschpagan(resids, exog)
-        w_stat, w_p, _, _ = het_white(resids, exog)
-        return {
-            "bp_stat": float(bp_stat),
-            "bp_p": float(bp_p),
-            "white_stat": float(w_stat),
-            "white_p": float(w_p),
-        }
+    def _get_model_exog(res, resids_index=None):
+        if res is None:
+            print("Heteroskedasticity tests skipped: model exog unavailable.")
+            return None
+        model = getattr(res, "model", None)
+        exog = getattr(model, "exog", None) if model is not None else None
+        if exog is None:
+            print("Heteroskedasticity tests skipped: model exog unavailable.")
+            return None
+        exog_names = getattr(model, "exog_names", None)
+        exog_df = None
+        if isinstance(exog, pd.DataFrame):
+            exog_df = exog.copy()
+        elif hasattr(exog, "dataframe"):
+            try:
+                exog_df = exog.dataframe.copy()
+            except Exception:
+                exog_df = None
+        elif hasattr(exog, "to_pandas"):
+            try:
+                exog_df = exog.to_pandas().copy()
+            except Exception:
+                exog_df = None
+        else:
+            try:
+                exog_df = pd.DataFrame(np.asarray(exog))
+            except Exception:
+                exog_df = None
+        if exog_df is None:
+            print("Heteroskedasticity tests skipped: model exog unavailable.")
+            return None
+        if exog_names is not None and len(exog_names) == exog_df.shape[1]:
+            exog_df.columns = list(exog_names)
+        if resids_index is not None:
+            try:
+                exog_df = exog_df.reindex(resids_index)
+            except Exception:
+                pass
+        return exog_df
+
+    def _is_constant(col):
+        col = pd.Series(col).dropna()
+        if col.empty:
+            return False
+        try:
+            vals = col.astype(float)
+            return np.nanstd(vals.values) < 1e-12
+        except Exception:
+            return col.nunique(dropna=True) <= 1
+
+    def _has_constant(exog):
+        for col in exog.columns:
+            if _is_constant(exog[col]):
+                return True
+        return False
+
+    def _modified_wald_test(resids):
+        if not isinstance(resids.index, pd.MultiIndex) or len(resids.index.names) < 2:
+            print("Modified Wald test skipped: needs panel index.")
+            return
+        idx_names = list(resids.index.names)
+        if "Region" in idx_names and "Date" in idx_names:
+            entity_level = idx_names.index("Region")
+        else:
+            entity_level = 0
+        counts = resids.groupby(level=entity_level).size()
+        if counts.empty or counts.nunique() != 1:
+            print("Modified Wald test skipped: unbalanced panel.")
+            return
+        resid_sq = resids**2
+        s_i2 = resid_sq.groupby(level=entity_level).mean()
+        s_bar2 = resid_sq.mean()
+        if s_bar2 == 0 or np.isnan(s_bar2):
+            print("Modified Wald test skipped: zero variance.")
+            return
+        T = int(counts.iloc[0])
+        N = int(len(counts))
+        W = (T / (2 * s_bar2**2)) * ((s_i2 - s_bar2) ** 2).sum()
+        p_val = 1 - stats.chi2.cdf(W, df=N)
+        print(f"Modified Wald: stat={W:.4f}, p={_format_pvalue(p_val)}")
+
+    def _hetero_feasible(exog):
+        const_cols = []
+        nonconst_cols = []
+        for col in exog.columns:
+            if _is_constant(exog[col]):
+                const_cols.append(col)
+            else:
+                nonconst_cols.append(col)
+        if not const_cols or not nonconst_cols:
+            return False, "insufficient columns"
+        try:
+            rank = np.linalg.matrix_rank(exog.values.astype(float))
+        except Exception:
+            return False, "rank-deficient exog"
+        if rank < exog.shape[1]:
+            return False, "rank-deficient exog"
+        return True, None
 
     def _normality_tests(resids):
         if len(resids) < 3:
@@ -1663,7 +1784,7 @@ def run_panel_model_diagnostics(
         print("H0: regressor is exogenous (p < threshold suggests endogeneity).")
         print(dwh_df.to_string(index=False, formatters={"p_val": _format_pvalue}))
 
-    def _run_for_model(label, res, success):
+    def _run_for_model(label, res, success, is_fe=False):
         print("\n" + "-" * 70)
         print(f"MODEL: {label}")
         print("-" * 70)
@@ -1683,13 +1804,42 @@ def run_panel_model_diagnostics(
             print("No residuals after alignment; diagnostics skipped.")
             return
 
-        try:
-            hetero = _hetero_tests(resids, X_m)
-            print("\nHeteroskedasticity tests")
-            print(f"Breusch-Pagan: stat={hetero['bp_stat']:.4f}, p={_format_pvalue(hetero['bp_p'])}")
-            print(f"White:         stat={hetero['white_stat']:.4f}, p={_format_pvalue(hetero['white_p'])}")
-        except Exception as e:
-            print(f"\nHeteroskedasticity tests error: {e}")
+        print("\nHeteroskedasticity tests")
+        if is_fe:
+            _modified_wald_test(resids)
+        else:
+            exog = _get_model_exog(res, resids.index)
+            if exog is not None:
+                try:
+                    exog = exog.loc[resids.index]
+                except Exception:
+                    print("Heteroskedasticity tests skipped: exog misaligned with residuals.")
+                else:
+                    exog = exog.dropna()
+                    if exog.empty:
+                        print("Heteroskedasticity tests skipped: exog empty after alignment.")
+                    else:
+                        resids_het = resids.loc[exog.index]
+                        if hetero_add_constant and not _has_constant(exog):
+                            exog = sm.add_constant(exog, has_constant="add")
+                        feasible, reason = _hetero_feasible(exog)
+                        if not feasible:
+                            print(f"Heteroskedasticity tests skipped: {reason}.")
+                        else:
+                            try:
+                                bp_stat, bp_p, _, _ = het_breuschpagan(resids_het, exog)
+                                print(f"Breusch-Pagan: stat={bp_stat:.4f}, p={_format_pvalue(bp_p)}")
+                            except Exception as e:
+                                print(f"Breusch-Pagan error: {e}")
+                            try:
+                                w_stat, w_p, _, _ = het_white(resids_het, exog)
+                                print(f"White:         stat={w_stat:.4f}, p={_format_pvalue(w_p)}")
+                            except Exception as e:
+                                msg = str(e).lower()
+                                if "rank" in msg or "singular" in msg:
+                                    print("White test skipped: rank-deficient design.")
+                                else:
+                                    print(f"White test error: {e}")
 
         try:
             normal = _normality_tests(resids)
@@ -1735,5 +1885,5 @@ def run_panel_model_diagnostics(
             print(f"\nShock dummy test error: {e}")
 
     _run_for_model("Pooled OLS", pooled_res, pooled_success)
-    _run_for_model("Fixed Effects", fe_res, fe_success)
+    _run_for_model("Fixed Effects", fe_res, fe_success, is_fe=True)
     _run_for_model("Random Effects", re_res, re_success)
