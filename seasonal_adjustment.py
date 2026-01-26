@@ -39,7 +39,13 @@ def seasonal_adjust_panel_wrapper(df, col_name):
     federal_variables = {
         'Exc_rate': 'Курс рубля', 
         'Inflation_Expectations': 'Инфляционные ожидания',
-        'Bonds_Rate_Correct_5Y': 'Ставки на облигации скорректированные 5Y'
+        'Bonds_Rate_Correct_5Y': 'Ставки на облигации скорректированные 5Y',
+        'IBC_constr_fed' : "ИБК строительства",
+        'IBC_torg_fed' : "ИБК торговля",
+        'IBC_auto_fed' : "ИБК авто",
+        'd_IBC_constr_fed' : "ИБК строительства",
+        'd_IBC_torg_fed' : "ИБК торговля",
+        'd_IBC_auto_fed' : "ИБК авто",
     }
     
     # РЕГИОНАЛЬНЫЕ переменные (серии по каждому региону)
@@ -57,7 +63,13 @@ def seasonal_adjust_panel_wrapper(df, col_name):
         'Cred_structure':'Доля ипотечных жилищных кредитов в розничном портфеле',
         'Def_Zadolg_Fl':'Доля просроченной задолженности по кредитам физических лиц',
         'Def_Zadolg_Mort':'Доля просроченной задолженности по ипотечным жилищным кредитам',
-        'Def_Zadolg_ConsCred':'Доля просроченной задолженности по потребительским кредитам'
+        'Def_Zadolg_ConsCred':'Доля просроченной задолженности по потребительским кредитам',
+        'IBC_constr':'ИБК строительства',
+        'IBC_torg':'ИБК торговля',
+        'IBC_auto':'ИБК авто',
+        'd_IBC_constr':'ИБК строительства',
+        'd_IBC_torg':'ИБК торговля',
+        'd_IBC_auto':'ИБК авто',
         
     }
     
