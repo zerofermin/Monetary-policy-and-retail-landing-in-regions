@@ -1,13 +1,361 @@
 import json
 import os
+import tempfile
+import uuid
 import warnings
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
+import seaborn as sns
+from scipy.stats import friedmanchisquare
+from statsmodels.graphics.tsaplots import plot_acf
+from statsmodels.tsa.seasonal import STL
+from statsmodels.tsa.x13 import x13_arima_analysis
 
-import panel_utils
-from panel_utils import seasonal_adjust_panel_series
+x13_dir = None
+
+
+def friedman_seasonality_test(df, date_col='Date', value_col='Variable', 
+                              test_name=None):
+
+    df_test = df.copy()
+    df_test['Month'] = df_test[date_col].dt.month
+    df_test['Year'] = df_test[date_col].dt.year
+    
+    # Перевод в таблицу: года × месяцы
+    pivot_data = df_test.pivot(index='Year', columns='Month', values=value_col)
+    
+    # Удаляем строки с NaN (неполные годы)
+    pivot_data = pivot_data.dropna()
+    
+    # Проверяем достаточность данных
+    if len(pivot_data) < 3:
+        print(f"{test_name}: Недостаточно лет ({len(pivot_data)}), минимум 3")
+        return {
+            'variable': test_name if test_name else value_col,
+            'chi_squared': np.nan,
+            'p_value': np.nan,
+            'has_seasonality': np.nan,
+            'n_years': len(pivot_data),
+            'n_months': len(pivot_data.columns),
+            'error': 'Недостаточно данных'
+        }
+    
+    try:
+        # Тест Фридмана
+        stat, p_value = friedmanchisquare(*[pivot_data[m].values for m in pivot_data.columns])
+        
+        # Определяем наличие сезонности
+        has_seasonality = p_value < 0.05
+        
+        return {
+            'variable': test_name if test_name else value_col,
+            'chi_squared': stat,
+            'p_value': p_value,
+            'has_seasonality': has_seasonality,
+            'n_years': len(pivot_data),
+            'n_months': len(pivot_data.columns),
+            'error': None
+        }
+    
+    except Exception as e:
+        print(f"Ошибка для {test_name}: {str(e)}")
+        return {
+            'variable': test_name if test_name else value_col,
+            'chi_squared': np.nan,
+            'p_value': np.nan,
+            'has_seasonality': np.nan,
+            'n_years': len(pivot_data),
+            'n_months': len(pivot_data.columns),
+            'error': str(e)
+        }
+
+
+def run_friedman_seasonality_tests(df, date_col='Date'):
+    numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+    if date_col in numeric_cols:
+        numeric_cols.remove(date_col)
+
+    # Применяем тест
+    friedman_results = []
+
+    for var_col in numeric_cols:
+        if var_col in df.columns:
+            result = friedman_seasonality_test(df, date_col=date_col, 
+                                              value_col=var_col, 
+                                              test_name=var_col)
+            if result:
+                friedman_results.append(result)
+
+    # Сохраняем результаты Фридмана
+    friedman_summary = pd.DataFrame([
+        {
+            'Variable': r['variable'],
+            'Chi_Squared': r['chi_squared'],
+            'P_Value': r['p_value'],
+            'Has_Seasonality': r['has_seasonality'],
+            'N_Years': r['n_years'],
+            'N_Months': r['n_months']
+        } 
+        for r in friedman_results
+    ])
+
+    print("\n" + "="*60)
+    print("РЕЗУЛЬТАТЫ ТЕСТОВ ФРИДМАНА")
+    print("="*80)
+    print(friedman_summary.to_string(index=False))
+
+    return friedman_summary
+
+
+def run_seasonal_diagnostics(df, date_col, value_col, shock_year=None):
+    print("\n" + "=" * 80)
+    print(f"Diagnostics for {value_col}")
+    print("=" * 80)
+
+    tmp_full = df[[date_col, value_col]].dropna().copy()
+    tmp_full[date_col] = pd.to_datetime(tmp_full[date_col])
+    tmp_full = tmp_full.sort_values(date_col)
+
+    shock_year_int = None
+    if shock_year is not None:
+        try:
+            shock_year_int = int(str(shock_year))
+        except Exception:
+            shock_year_int = None
+
+    tmp_stats = tmp_full
+    if shock_year_int is not None:
+        tmp_stats = tmp_full[tmp_full[date_col].dt.year != shock_year_int].copy()
+        years_left = tmp_stats[date_col].dt.year.nunique()
+        print(f"Shock filter applied: {shock_year_int}; rows={len(tmp_stats)}, years={years_left}")
+    else:
+        years_full = tmp_full[date_col].dt.year.nunique()
+        if shock_year is None:
+            print(f"Shock filter not applied: rows={len(tmp_full)}, years={years_full}")
+        else:
+            print(f"Shock filter not applied (invalid): rows={len(tmp_full)}, years={years_full}")
+
+    if tmp_stats.empty:
+        print("No data after filtering; diagnostics skipped.")
+        return
+
+    try:
+        friedman_res = friedman_seasonality_test(
+            tmp_stats,
+            date_col=date_col,
+            value_col=value_col,
+            test_name=value_col
+        )
+        print("Friedman test result:", friedman_res)
+    except Exception as e:
+        print("Friedman test error:", e)
+
+    tmp_stats["Month"] = tmp_stats[date_col].dt.month
+    month_stats = tmp_stats.groupby("Month")[value_col].agg(["mean", "median", "var", "count"])
+    print("\nMonth-of-year mean/median:")
+    print(month_stats[["mean", "median"]].to_string())
+
+    var_min = month_stats["var"].min()
+    var_max = month_stats["var"].max()
+    if pd.isna(var_min) or pd.isna(var_max) or var_min == 0:
+        var_ratio = np.nan
+    else:
+        var_ratio = var_max / var_min
+    print(f"\nStability indicator (month variance ratio max/min): {var_ratio}")
+
+    pivot = tmp_stats.pivot_table(
+        index=tmp_stats[date_col].dt.year,
+        columns="Month",
+        values=value_col,
+        aggfunc="mean"
+    )
+    plt.figure(figsize=(12, 5))
+    for m in pivot.columns:
+        plt.plot(pivot.index, pivot[m], marker="o", linewidth=1, label=str(m))
+    plt.title(f"{value_col} seasonal subseries (by month)")
+    plt.xlabel("Year")
+    plt.ylabel(value_col)
+    plt.legend(ncol=6, fontsize=7)
+    plt.tight_layout()
+    plt.show()
+
+    plt.figure(figsize=(12, 5))
+    sns.boxplot(x="Month", y=value_col, data=tmp_stats)
+    plt.title(f"{value_col} month boxplot")
+    plt.tight_layout()
+    plt.show()
+
+    def _run_stl_acf_block(block_df, label=None):
+        s = block_df.set_index(date_col)[value_col].sort_index()
+        s = s.asfreq("MS")
+        if s.isna().any():
+            if label:
+                print(f"{label} STL/ACF skipped: gappy series")
+            else:
+                print("STL/ACF skipped: gappy series")
+            return
+        s = s.dropna()
+        if len(s) < 24:
+            if label:
+                print(f"{label} STL/ACF skipped: not enough observations")
+            else:
+                print("STL/ACF skipped: not enough observations")
+            return
+
+        label_suffix = f" ({label})" if label else ""
+        try:
+            stl = STL(s, period=12, robust=True)
+            res = stl.fit()
+            res.plot()
+            plt.suptitle(f"{value_col} STL decomposition{label_suffix}")
+            plt.tight_layout()
+            plt.show()
+        except Exception as e:
+            if label:
+                print(f"{label} STL error:", e)
+            else:
+                print("STL error:", e)
+
+        fig, axes = plt.subplots(1, 2, figsize=(14, 4))
+        try:
+            plot_acf(s.dropna(), lags=36, ax=axes[0])
+            axes[0].set_title(f"{value_col} ACF{label_suffix}")
+        except Exception as e:
+            axes[0].set_title(f"{value_col} ACF error{label_suffix}")
+            if label:
+                print(f"{label} ACF error:", e)
+            else:
+                print("ACF error:", e)
+
+        try:
+            s_seasonal = s.diff(12).dropna()
+            plot_acf(s_seasonal, lags=36, ax=axes[1])
+            axes[1].set_title(f"{value_col} seasonal ACF (diff 12){label_suffix}")
+        except Exception as e:
+            axes[1].set_title(f"{value_col} seasonal ACF error{label_suffix}")
+            if label:
+                print(f"{label} Seasonal ACF error:", e)
+            else:
+                print("Seasonal ACF error:", e)
+
+        plt.tight_layout()
+        plt.show()
+
+    if shock_year_int is None:
+        _run_stl_acf_block(tmp_full)
+    else:
+        pre_cut = pd.Timestamp(shock_year_int, 1, 1)
+        post_cut = pd.Timestamp(shock_year_int + 1, 1, 1)
+        pre_block = tmp_full[tmp_full[date_col] < pre_cut]
+        post_block = tmp_full[tmp_full[date_col] >= post_cut]
+        _run_stl_acf_block(pre_block, "pre-shock")
+        _run_stl_acf_block(post_block, "post-shock")
+
+
+def seasonal_adjust_panel_series(series_data, variable_name, region_name=None, min_obs=24):
+    """
+    Выполнить X-13 сезонную корректировку для одной серии (панельные данные)
+    
+    Parameters:
+    -----------
+    series_data : pd.Series
+        Временной ряд с DatetimeIndex
+    variable_name : str
+        Название переменной
+    region_name : str, optional
+        Название региона (для региональных переменных)
+    min_obs : int
+        Minimum number of observations
+    
+    Returns:
+    --------
+    dict с результатами или None при ошибке
+    """
+    try:
+        # Проверка данных
+        if len(series_data) < min_obs:
+            return None
+        
+        # Убедиться, что индекс - DatetimeIndex
+        if not isinstance(series_data.index, pd.DatetimeIndex):
+            series_data.index = pd.to_datetime(series_data.index)
+        
+        # Установить частоту на месячную
+        ts_regular = series_data.asfreq('MS').dropna()
+        
+        if len(ts_regular) < min_obs:
+            return None
+        
+        # Информация о данных
+        start_date = ts_regular.index[0]
+        end_date = ts_regular.index[-1]
+        
+        # Создаем уникальную временную папку для каждого вызова X-13
+        # чтобы избежать конфликтов файлов
+        temp_dir = tempfile.mkdtemp(prefix=f"x13_{uuid.uuid4().hex[:8]}_")
+        
+        # Запуск X-13 с указанием уникальной временной директории
+        try:
+            res = x13_arima_analysis(
+                endog=ts_regular,
+                x12path=x13_dir,
+                prefer_x13=True,
+                outlier=True,
+                trading=False,
+                print_stdout=False
+            )
+            
+            # Извлечение компонент
+            adj = res.seasadj
+            trend = res.trend
+            seas = ts_regular - adj
+            
+        except Exception as e:
+            # Если X-13 не сработал, попробуем без outlier
+            try:
+                res = x13_arima_analysis(
+                    endog=ts_regular,
+                    x12path=x13_dir,
+                    prefer_x13=True,
+                    outlier=False,  # Без определения выбросов
+                    trading=False,
+                    print_stdout=False
+                )
+                
+                adj = res.seasadj
+                trend = res.trend
+                seas = ts_regular - adj
+                
+            except Exception as e2:
+                # Если все еще не работает, пропускаем
+                return None
+        
+        # Расчёт эффективности
+        original_std = ts_regular.std()
+        adj_std = adj.std()
+        reduction = 100 * (1 - adj_std / original_std) if original_std > 0 else 0
+        
+        # Удаляем временную директорию
+        try:
+            import shutil
+            shutil.rmtree(temp_dir, ignore_errors=True)
+        except:
+            pass
+        
+        return {
+            'dates': ts_regular.index,
+            'adj': adj.values,
+            'trend': trend.values,
+            'seasonal': seas.values,
+            'reduction': reduction
+        }
+        
+    except Exception as e:
+        # Подавляем вывод ошибок
+        return None
 
 
 def seasonal_adjust_panel_wrapper(df, col_name):
@@ -30,8 +378,8 @@ def seasonal_adjust_panel_wrapper(df, col_name):
         raise FileNotFoundError(f"X-13 binary not found at {X13_PATH}")
     
     # Если X13_PATH — полный путь к бинарнику, берем его директорию для x12path
+    global x13_dir
     x13_dir = X13_PATH if os.path.isdir(X13_PATH) else os.path.dirname(X13_PATH)
-    panel_utils.x13_dir = x13_dir
     
     # Создаем папку для логов
     os.makedirs("x13_logs", exist_ok=True)
