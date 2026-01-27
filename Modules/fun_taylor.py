@@ -1,10 +1,10 @@
-# -*- coding: utf-8 -*-
-
 import numpy as np
+
 import arch.unitroot as au
 from scipy.stats import friedmanchisquare
 from statsmodels.stats.diagnostic import acorr_ljungbox
 from statsmodels.tsa.stattools import adfuller, kpss
+
 
 def calculate_expected_inflation_12m(df, date_col='Date', 
                                      inflation_col='Inflation_Expectations'):

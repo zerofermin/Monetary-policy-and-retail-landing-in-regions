@@ -1,19 +1,18 @@
-import numpy as np
-import pandas as pd
-import statsmodels.api as sm
-from scipy import stats
-from scipy.stats import friedmanchisquare
-import matplotlib.pyplot as plt
-import seaborn as sns
-from statsmodels.tsa.seasonal import STL
-from statsmodels.graphics.tsaplots import plot_acf
-from statsmodels.tsa.x13 import x13_arima_analysis
 import os
 import tempfile
 import uuid
+
 import matplotlib.pyplot as plt
-from statsmodels.tsa.seasonal import STL
+import numpy as np
+import pandas as pd
+import seaborn as sns
+import statsmodels.api as sm
+from scipy import stats
+from scipy.stats import friedmanchisquare
 from statsmodels.graphics.tsaplots import plot_acf
+from statsmodels.tsa.seasonal import STL
+from statsmodels.tsa.x13 import x13_arima_analysis
+
 
 def detect_outlier_regions_iqr(df, key_vars, min_obs=60, max_na_pct=0.3):
     """

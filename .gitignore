@@ -6,3 +6,5 @@ removed.py
 mon_shock_dataset.pkl
 region_cluster_dataset.pkl
 Описание результатов/
+__pycache__/
+x13_logs/
