@@ -1118,7 +1118,7 @@ def run_panel_regressions(df_input, df_reg, dependent_var, exog_vars_initial, co
 
     try:
         pooled_mod = PooledOLS(y, X_pooled)
-        pooled_res = pooled_mod.fit(cov_type=cov_type)
+        pooled_res = pooled_mod.fit(cov_type=cov_type, cluster_entity=cluster_entity)
         print(pooled_res.summary)
         pooled_success = True
     except Exception as e:
@@ -1151,7 +1151,7 @@ def run_panel_regressions(df_input, df_reg, dependent_var, exog_vars_initial, co
 
     try:
         re_mod = RandomEffects(y, X_re)
-        re_res = re_mod.fit(cov_type=cov_type)
+        re_res = re_mod.fit(cov_type=cov_type, cluster_entity=cluster_entity)
         print(re_res.summary)
         re_success = True
     except Exception as e:
