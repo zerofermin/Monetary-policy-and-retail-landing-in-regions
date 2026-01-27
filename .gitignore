@@ -8,3 +8,4 @@ region_cluster_dataset.pkl
 Описание результатов/
 __pycache__/
 x13_logs/
+filter_for_cluster.pkl
