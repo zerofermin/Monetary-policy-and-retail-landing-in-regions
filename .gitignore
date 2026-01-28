@@ -1,11 +1,13 @@
-.ipynb_checkpoints/
 *.xlsx
 *.json
+.ipynb_checkpoints/
+Описание результатов/
+__pycache__/
+x13_logs/
 models_tested.txt
 removed.py
 mon_shock_dataset.pkl
 region_cluster_dataset.pkl
-Описание результатов/
-__pycache__/
-x13_logs/
 filter_for_cluster.pkl
+region_cluster_hank_dataset.pkl
+region_cluster_new_dataset.pkl
