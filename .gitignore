@@ -1,0 +1,21 @@
+*.xlsx
+*.json
+.ipynb_checkpoints/
+Описание результатов/
+__pycache__/
+x13_logs/
+models_tested.txt
+Лаптева.pdf
+removed.py
+mon_shock_dataset.pkl
+region_cluster_dataset.pkl
+filter_for_cluster.pkl
+region_cluster_hank_dataset.pkl
+region_cluster_new_dataset.pkl
+
+# Local agent/tooling state
+.agent/
+.agents/
+.claude/
+AGENTS.md
+Отчеты/
